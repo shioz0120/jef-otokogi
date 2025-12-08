@@ -51,7 +51,6 @@ def load_data():
             
     if not df_rates.empty:
         df_rates.columns = df_rates.columns.str.strip()
-        # レート設定は整数で扱う
         cols = ['min_rank', 'max_rank', 'amount']
         for c in cols:
             if c in df_rates.columns:
@@ -59,7 +58,8 @@ def load_data():
         
     if not df_mem.empty:
         df_mem.columns = df_mem.columns.str.strip()
-        df_mem['display_order'] = pd.to_numeric(df_mem['display_order'], errors='coerce')
+        # display_orderは数値にするが、文字列として編集される可能性も考慮して柔軟に
+        df_mem['display_order'] = pd.to_numeric(df_mem['display_order'], errors='coerce').fillna(999)
 
     return df_trans, df_sched, df_rates, df_mem
 
@@ -138,7 +138,6 @@ else:
         current_trans = df_trans[df_trans['season'].astype(str) == str(selected_season)]
 
 # --- タブ構成 ---
-# 【変更】「⚙️ 設定」タブを追加
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 ランキング", "📝 入力", "📜 履歴", "📅 日程追加", "⚙️ 設定"])
 
 # === Tab 1: ランキング ===
@@ -177,128 +176,5 @@ with tab2:
     if st.session_state['role'] != 'admin':
         st.warning("ゲストは閲覧のみです")
     else:
-        # 【追加】現在のレート表を確認できるエリア
-        with st.expander("💰 現在のレート表を確認する"):
-            st.dataframe(df_rates, hide_index=True)
-
-        home_games = pd.DataFrame()
-        if not current_sched.empty:
-            home_games = current_sched[current_sched['type'] == 'Home']
-        
-        if home_games.empty:
-            st.info(f"シーズン {selected_season} のホームゲーム予定が見つかりません。")
-            st.info("「📅 日程追加」タブから日程を登録してください。")
-        else:
-            match_dict = {f"{row['season']} {row['section']} (vs {row['opponent']})": row['section'] for _, row in home_games.iterrows()}
-            
-            selected_label = st.selectbox("試合を選択", list(match_dict.keys()))
-            selected_match_id = match_dict[selected_label]
-            
-            st.subheader("一括入力")
-            with st.form("input_form"):
-                active_mem = df_mem[df_mem['is_active'] == "TRUE"].sort_values('display_order')
-                inputs = {}
-                cols = st.columns(2)
-                for idx, row in active_mem.iterrows():
-                    with cols[idx % 2]:
-                        inputs[row['name']] = st.number_input(f"{row['name']}", min_value=0, step=1, key=f"in_{row['name']}")
-                
-                submitted = st.form_submit_button("登録・更新")
-                
-                if submitted:
-                    ws_trans = get_worksheet("transactions")
-                    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    date_str = datetime.now().strftime('%Y/%m/%d')
-                    target_season = selected_season if selected_season != "全期間" else str(datetime.now().year)
-
-                    new_rows = []
-                    cnt = 0
-                    for name, num in inputs.items():
-                        if num > 0:
-                            amt = calculate_amount(num, df_rates)
-                            new_rows.append([
-                                date_str,
-                                str(target_season),
-                                selected_match_id,
-                                name,
-                                num,
-                                amt,
-                                now_str
-                            ])
-                            cnt += 1
-                    
-                    if new_rows:
-                        ws_trans.append_rows(new_rows)
-                        st.success(f"{cnt}件 保存しました！")
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.warning("番号を入力してください")
-
-# === Tab 3: 履歴 ===
-with tab3:
-    if not current_trans.empty:
-        if 'timestamp' in current_trans.columns and 'date' in current_trans.columns:
-            sorted_df = current_trans.sort_values(['date', 'timestamp'], ascending=[False, False])
-            display_df = sorted_df[['season', 'date', 'match_id', 'name', 'number', 'amount']]
-            st.dataframe(display_df, use_container_width=True)
-        else:
-            st.dataframe(current_trans, use_container_width=True)
-    else:
-        st.write("履歴なし")
-
-# === Tab 4: 日程追加 (Adminのみ) ===
-with tab4:
-    st.header("📅 新しい試合日程の追加")
-    if st.session_state['role'] != 'admin':
-        st.warning("管理者のみ追加可能です")
-    else:
-        with st.form("add_schedule_form"):
-            col1, col2 = st.columns(2)
-            with col1:
-                in_season = st.text_input("シーズン (例: 2025, 26-27)", value=str(datetime.now().year))
-                in_section = st.text_input("節 (例: 第5節)")
-                in_date = st.text_input("日付 (例: 2025/4/1)")
-            with col2:
-                in_opponent = st.text_input("対戦相手")
-                in_type = st.selectbox("開催", ["Home", "Away"])
-                in_stadium = st.text_input("スタジアム", value="フクアリ")
-
-            submit_sched = st.form_submit_button("日程を追加する")
-
-            if submit_sched:
-                if in_section and in_date and in_opponent:
-                    ws_sched = get_worksheet("schedule")
-                    ws_sched.append_row([in_season, in_section, in_date, in_opponent, in_type, in_stadium])
-                    st.success(f"{in_section} vs {in_opponent} を追加しました！")
-                    time.sleep(1)
-                    st.rerun()
-                else:
-                    st.error("入力していない項目があります")
-
-# === Tab 5: 設定 (レート変更) ===
-with tab5:
-    st.header("⚙️ レート設定")
-    if st.session_state['role'] != 'admin':
-        st.warning("管理者のみ変更可能です")
-    else:
-        st.markdown("金額のルールを変更できます。**変更後、「保存する」ボタンを押してください。**")
-        
-        # 編集可能なデータフレームを表示 (行の追加・削除も可能)
-        edited_df = st.data_editor(df_rates, num_rows="dynamic", use_container_width=True)
-        
-        if st.button("レート設定を保存する"):
-            try:
-                ws_rates = get_worksheet("rates")
-                # 一度クリアしてから書き込む
-                ws_rates.clear()
-                # ヘッダーを含めて書き込み
-                # updateメソッドにはリストのリストを渡す
-                data_to_write = [edited_df.columns.values.tolist()] + edited_df.values.tolist()
-                ws_rates.update(data_to_write)
-                
-                st.success("レート設定を更新しました！")
-                time.sleep(1)
-                st.rerun()
-            except Exception as e:
-                st.error(f"保存エラー: {e}")
+        # レート表確認エリア
+        with st.expander("💰 現在
