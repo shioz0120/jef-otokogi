@@ -301,4 +301,20 @@ with tab5:
         st.subheader("👥 メンバー管理")
         st.info("※ `is_active` を **TRUE** で表示、**FALSE** で非表示")
         edited_mem = st.data_editor(
-            df_mem, num_rows="dynamic", use_container_width=True, key="
+            df_mem, num_rows="dynamic", use_container_width=True, key="editor_members",
+            column_config={
+                "is_active": st.column_config.SelectboxColumn("有効", options=["TRUE", "FALSE"], required=True),
+                "display_order": st.column_config.NumberColumn("並び順", min_value=1, step=1)
+            }
+        )
+        
+        if st.button("メンバー設定を保存する"):
+            try:
+                ws = get_worksheet("members")
+                ws.clear()
+                ws.update([edited_mem.columns.values.tolist()] + edited_mem.astype(str).values.tolist())
+                st.success("メンバー情報を更新しました！")
+                time.sleep(1)
+                st.rerun()
+            except Exception as e:
+                st.error(f"保存エラー: {e}")
