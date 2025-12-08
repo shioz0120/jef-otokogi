@@ -5,6 +5,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 import time
 import plotly.express as px
+import requests
+from bs4 import BeautifulSoup
 
 # --- ページ設定 ---
 st.set_page_config(page_title="男気チャンス", page_icon="⚽", layout="wide")
@@ -72,22 +74,77 @@ def calculate_amount(number, df_rates):
             continue
     return 1000
 
+# --- 関数: ジェフニュース取得 (スクレイピング) ---
+@st.cache_data(ttl=3600) # 1時間キャッシュ
+def get_jef_news():
+    url = "https://jefunited.co.jp/news/list"
+    try:
+        # サイトからHTMLを取得
+        response = requests.get(url, timeout=5)
+        soup = BeautifulSoup(response.content, "html.parser")
+        
+        # ニュースリストを探す (サイトの構造に合わせて調整)
+        # 一般的な構造として記事リンク(aタグ)を抽出
+        news_items = []
+        
+        # サイト構造を解析して特定のクラスを探す
+        # ※サイトのデザインが変わるとここも修正が必要になります
+        articles = soup.find_all('a', class_='news-list__item')
+        
+        if not articles:
+             # クラス名が違う場合の保険: 単純にリンクを探す
+             articles = soup.find_all('a', href=True)
+             # URLに /news/detail/ が含まれるものだけ抽出
+             articles = [a for a in articles if '/news/detail/' in a['href']][:5]
+
+        for a in articles[:5]: # 最新5件のみ
+            link = a.get('href')
+            if link.startswith('/'):
+                link = f"https://jefunited.co.jp{link}"
+            
+            # テキスト抽出 (日付とタイトルが混ざっていることが多いので整形)
+            text = a.get_text(strip=True)
+            
+            news_items.append({"text": text, "link": link})
+            
+        return news_items
+    except Exception:
+        return None
+
 # --- 関数: ログイン処理 ---
 def login():
     if 'role' in st.session_state:
         return True
-    st.title("⚽ 男気チャンス")
-    st.markdown("##### 合言葉を入力してください")
-    password = st.text_input("Password", type="password")
-    if st.button("Login"):
-        if password == st.secrets["passwords"]["admin"]:
-            st.session_state['role'] = 'admin'
-            st.rerun()
-        elif password == st.secrets["passwords"]["guest"]:
-            st.session_state['role'] = 'guest'
-            st.rerun()
-        else:
-            st.error("パスワードが違います")
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.title("⚽ 男気チャンス")
+        st.markdown("##### 合言葉を入力してください")
+        password = st.text_input("Password", type="password")
+        if st.button("Login"):
+            if password == st.secrets["passwords"]["admin"]:
+                st.session_state['role'] = 'admin'
+                st.rerun()
+            elif password == st.secrets["passwords"]["guest"]:
+                st.session_state['role'] = 'guest'
+                st.rerun()
+            else:
+                st.error("パスワードが違います")
+    
+    # --- ニュース表示エリア ---
+    st.divider()
+    st.subheader("📰 JEF UNITED 最新ニュース")
+    
+    news_list = get_jef_news()
+    if news_list:
+        for news in news_list:
+            # リンク付きテキストで表示
+            st.markdown(f"- [{news['text']}]({news['link']})")
+    else:
+        st.caption("ニュースの取得に失敗しました。公式サイトをご確認ください。")
+        st.link_button("公式サイトへ", "https://jefunited.co.jp/news/list")
+
     return False
 
 # ==========================================
@@ -172,44 +229,30 @@ with tab2:
             st.info(f"シーズン {selected_season} のホームゲーム予定が見つかりません。")
             st.info("「📅 日程追加」タブから日程を登録してください。")
         else:
-            # 【変更】日付順に並べ替え & 次の試合をデフォルト選択するロジック
-            
-            # 1. まずプルダウンのリストを作る
+            # 日付判定ロジック
             match_options = []
             match_ids = []
-            
-            # 日付判定のために今日の日付を取得
             today = datetime.now().date()
             default_index = 0
             future_found = False
 
-            # 行ごとにループ処理
             for idx, row in home_games.iterrows():
-                # ラベル作成: "2025/4/1 第1節 (vs 山形)"
                 label = f"{row['date']} {row['section']} (vs {row['opponent']})"
                 match_options.append(label)
                 match_ids.append(row['section'])
-                
-                # デフォルト選択位置の判定 (まだ未来の試合が見つかっていない場合のみチェック)
                 if not future_found:
                     try:
-                        # 文字列の日付を日付型に変換 (例: 2025/4/1)
                         match_date = datetime.strptime(str(row['date']).strip(), '%Y/%m/%d').date()
-                        # 試合日が今日以降なら、そのインデックスをデフォルトにする
                         if match_date >= today:
                             default_index = len(match_options) - 1
                             future_found = True
                     except:
-                        pass # 日付変換エラー等は無視
+                        pass
             
-            # もし未来の試合が一つもなければ（全日程終了）、最後の試合をデフォルトにする
             if not future_found and match_options:
                 default_index = len(match_options) - 1
 
-            # selectbox作成 (index引数で初期値を指定)
             sel_label = st.selectbox("試合を選択", match_options, index=default_index)
-            
-            # 選ばれたラベルに対応するmatch_idを取得
             sel_index = match_options.index(sel_label)
             sel_match_id = match_ids[sel_index]
             
