@@ -128,7 +128,7 @@ with tab1:
         
         # 合計
         total = ranking['amount'].sum()
-        st.metric("忘年会プール金", f"¥{total:,}")
+        st.metric("男気合計", f"¥{total:,}")
     else:
         st.info("データがまだありません")
 
