@@ -56,7 +56,7 @@ def login():
     if 'role' in st.session_state:
         return True
 
-    st.title("⚽ JEF千葉 男気チャレンジ")
+    st.title("⚽ 男気チャンス")
     st.markdown("##### 合言葉を入力してください")
     
     password = st.text_input("Password", type="password")
