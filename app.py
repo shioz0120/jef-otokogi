@@ -24,13 +24,11 @@ def get_worksheet(sheet_name):
 # --- 関数: データ取得 (最強版) ---
 def load_data_from_sheet(sheet_name):
     ws = get_worksheet(sheet_name)
-    # get_all_records ではなく get_all_values を使用 (生データを取得)
     all_values = ws.get_all_values()
     
     if not all_values:
-        return pd.DataFrame() # 空っぽの場合
+        return pd.DataFrame()
     
-    # 1行目をヘッダーとして強制的に設定
     headers = all_values[0]
     data = all_values[1:]
     
@@ -38,33 +36,27 @@ def load_data_from_sheet(sheet_name):
     return df
 
 def load_data():
-    # 改良された読み込み関数を使用
     df_trans = load_data_from_sheet("transactions")
     df_sched = load_data_from_sheet("schedule")
     df_rates = load_data_from_sheet("rates")
     df_mem = load_data_from_sheet("members")
     
-    # --- 型変換とデータ整理 ---
-    
-    # transactions: 数値変換
+    # 型変換
     if not df_trans.empty:
-        # 列名の空白除去
         df_trans.columns = df_trans.columns.str.strip()
-        
-        # amount, number を数値化
         if 'amount' in df_trans.columns:
             df_trans['amount'] = pd.to_numeric(df_trans['amount'], errors='coerce').fillna(0)
         if 'number' in df_trans.columns:
             df_trans['number'] = pd.to_numeric(df_trans['number'], errors='coerce').fillna(0)
             
-    # rates: 数値変換
     if not df_rates.empty:
+        df_rates.columns = df_rates.columns.str.strip()
         df_rates['min_rank'] = pd.to_numeric(df_rates['min_rank'], errors='coerce')
         df_rates['max_rank'] = pd.to_numeric(df_rates['max_rank'], errors='coerce')
         df_rates['amount'] = pd.to_numeric(df_rates['amount'], errors='coerce')
         
-    # members: display_order数値化
     if not df_mem.empty:
+        df_mem.columns = df_mem.columns.str.strip()
         df_mem['display_order'] = pd.to_numeric(df_mem['display_order'], errors='coerce')
 
     return df_trans, df_sched, df_rates, df_mem
@@ -73,7 +65,6 @@ def load_data():
 def calculate_amount(number, df_rates):
     if number == 0: return 0
     for _, row in df_rates.iterrows():
-        # データフレームから値を取り出すとfloatになることがあるのでintへ
         try:
             min_r = int(row['min_rank'])
             max_r = int(row['max_rank'])
@@ -152,7 +143,6 @@ with tab1:
     st.header(f"{selected_season} 男気ランキング")
     
     if not current_trans.empty:
-        # 必要な列があるかチェック
         if 'timestamp' in current_trans.columns and 'amount' in current_trans.columns:
             # 最新状態を取得（重複排除）
             df_latest = current_trans.sort_values('timestamp').drop_duplicates(subset=['match_id', 'name'], keep='last')
@@ -241,7 +231,9 @@ with tab2:
 with tab3:
     if not current_trans.empty:
         if 'timestamp' in current_trans.columns and 'date' in current_trans.columns:
-            display_df = current_trans[['date', 'match_id', 'name', 'number', 'amount', 'season']].sort_values(['date', 'timestamp'], ascending=[False, False])
+            # 【修正】先に並び替えてから、表示したい列だけ選ぶように修正しました
+            sorted_df = current_trans.sort_values(['date', 'timestamp'], ascending=[False, False])
+            display_df = sorted_df[['date', 'match_id', 'name', 'number', 'amount', 'season']]
             st.dataframe(display_df, use_container_width=True)
         else:
             st.dataframe(current_trans, use_container_width=True)
