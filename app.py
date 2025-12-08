@@ -184,4 +184,145 @@ with tab2:
             future_found = False
 
             # 行ごとにループ処理
-            for idx, row in home
+            for idx, row in home_games.iterrows():
+                # ラベル作成: "2025/4/1 第1節 (vs 山形)"
+                label = f"{row['date']} {row['section']} (vs {row['opponent']})"
+                match_options.append(label)
+                match_ids.append(row['section'])
+                
+                # デフォルト選択位置の判定 (まだ未来の試合が見つかっていない場合のみチェック)
+                if not future_found:
+                    try:
+                        # 文字列の日付を日付型に変換 (例: 2025/4/1)
+                        match_date = datetime.strptime(str(row['date']).strip(), '%Y/%m/%d').date()
+                        # 試合日が今日以降なら、そのインデックスをデフォルトにする
+                        if match_date >= today:
+                            default_index = len(match_options) - 1
+                            future_found = True
+                    except:
+                        pass # 日付変換エラー等は無視
+            
+            # もし未来の試合が一つもなければ（全日程終了）、最後の試合をデフォルトにする
+            if not future_found and match_options:
+                default_index = len(match_options) - 1
+
+            # selectbox作成 (index引数で初期値を指定)
+            sel_label = st.selectbox("試合を選択", match_options, index=default_index)
+            
+            # 選ばれたラベルに対応するmatch_idを取得
+            sel_index = match_options.index(sel_label)
+            sel_match_id = match_ids[sel_index]
+            
+            st.subheader("一括入力")
+            st.info("💡 抽選忘れの場合は **9999** を入力してください")
+
+            with st.form("input_form"):
+                active_mem = df_mem[df_mem['is_active'] == "TRUE"].sort_values('display_order')
+                inputs = {}
+                cols = st.columns(2)
+                for idx, row in active_mem.iterrows():
+                    with cols[idx % 2]:
+                        inputs[row['name']] = st.number_input(f"{row['name']}", min_value=0, step=1, key=f"in_{row['name']}")
+                
+                if st.form_submit_button("登録・更新"):
+                    ws_trans = get_worksheet("transactions")
+                    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    date_str = datetime.now().strftime('%Y/%m/%d')
+                    tgt_season = selected_season if selected_season != "全期間" else str(datetime.now().year)
+                    new_rows = []
+                    cnt = 0
+                    for name, num in inputs.items():
+                        if num > 0:
+                            amt = calculate_amount(num, df_rates)
+                            new_rows.append([date_str, str(tgt_season), sel_match_id, name, num, amt, now_str])
+                            cnt += 1
+                    
+                    if new_rows:
+                        ws_trans.append_rows(new_rows)
+                        st.success(f"{cnt}件 保存しました！")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.warning("番号を入力してください")
+
+# === Tab 3: 履歴 ===
+with tab3:
+    if not current_trans.empty:
+        if 'timestamp' in current_trans.columns and 'date' in current_trans.columns:
+            sorted_df = current_trans.sort_values(['date', 'timestamp'], ascending=[False, False])
+            disp_df = sorted_df[['season', 'date', 'match_id', 'name', 'number', 'amount']]
+            st.dataframe(disp_df, use_container_width=True)
+        else:
+            st.dataframe(current_trans, use_container_width=True)
+    else:
+        st.write("履歴なし")
+
+# === Tab 4: 日程追加 (Adminのみ) ===
+with tab4:
+    st.header("📅 新しい試合日程の追加")
+    if st.session_state['role'] != 'admin':
+        st.warning("管理者のみ追加可能です")
+    else:
+        with st.form("add_schedule_form"):
+            c1, c2 = st.columns(2)
+            with c1:
+                in_season = st.text_input("シーズン (例: 2025)", value=str(datetime.now().year))
+                in_section = st.text_input("節 (例: 第5節)")
+                in_date = st.text_input("日付 (例: 2025/4/1)")
+            with c2:
+                in_opp = st.text_input("対戦相手")
+                in_type = st.selectbox("開催", ["Home", "Away"])
+                in_stad = st.text_input("スタジアム", value="フクアリ")
+
+            if st.form_submit_button("日程を追加する"):
+                if in_section and in_date and in_opp:
+                    get_worksheet("schedule").append_row([in_season, in_section, in_date, in_opp, in_type, in_stad])
+                    st.success(f"{in_section} vs {in_opp} を追加しました！")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("入力していない項目があります")
+
+# === Tab 5: 設定 ===
+with tab5:
+    st.header("⚙️ アプリ設定")
+    if st.session_state['role'] != 'admin':
+        st.warning("管理者のみ変更可能です")
+    else:
+        st.subheader("💰 レート設定")
+        edited_rates = st.data_editor(df_rates, num_rows="dynamic", use_container_width=True, key="editor_rates")
+        st.markdown("※ 抽選忘れは **9999** を入力")
+
+        if st.button("レート設定を保存する"):
+            try:
+                ws = get_worksheet("rates")
+                ws.clear()
+                ws.update([edited_rates.columns.values.tolist()] + edited_rates.astype(str).values.tolist())
+                st.success("レート設定を更新しました！")
+                time.sleep(1)
+                st.rerun()
+            except Exception as e:
+                st.error(f"保存エラー: {e}")
+
+        st.divider()
+
+        st.subheader("👥 メンバー管理")
+        st.info("※ `is_active` を **TRUE** で表示、**FALSE** で非表示")
+        edited_mem = st.data_editor(
+            df_mem, num_rows="dynamic", use_container_width=True, key="editor_members",
+            column_config={
+                "is_active": st.column_config.SelectboxColumn("有効", options=["TRUE", "FALSE"], required=True),
+                "display_order": st.column_config.NumberColumn("並び順", min_value=1, step=1)
+            }
+        )
+        
+        if st.button("メンバー設定を保存する"):
+            try:
+                ws = get_worksheet("members")
+                ws.clear()
+                ws.update([edited_mem.columns.values.tolist()] + edited_mem.astype(str).values.tolist())
+                st.success("メンバー情報を更新しました！")
+                time.sleep(1)
+                st.rerun()
+            except Exception as e:
+                st.error(f"保存エラー: {e}")
