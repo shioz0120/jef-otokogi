@@ -151,9 +151,9 @@ with tab1:
             ranking = df_latest.groupby('name')['amount'].sum().reset_index()
             ranking = ranking.sort_values('amount', ascending=False)
             
-            # 合計金額
+            # 合計金額 【変更: ラベルを男気トータルへ】
             total = ranking['amount'].sum()
-            st.metric("男気合計", f"¥{total:,}")
+            st.metric("男気トータル", f"¥{total:,}")
 
             col1, col2 = st.columns([2, 1])
             with col1:
@@ -182,7 +182,10 @@ with tab2:
             st.info(f"シーズン {selected_season} のホームゲーム予定が見つかりません。")
             st.info("「📅 日程追加」タブから日程を登録してください。")
         else:
-            match_dict = {f"{row['section']} (vs {row['opponent']})": row['section'] for _, row in home_games.iterrows()}
+            # 【変更: プルダウンにシーズン名を表示】
+            # 表示例: "2025 第1節 (vs 山形)"
+            match_dict = {f"{row['season']} {row['section']} (vs {row['opponent']})": row['section'] for _, row in home_games.iterrows()}
+            
             selected_label = st.selectbox("試合を選択", list(match_dict.keys()))
             selected_match_id = match_dict[selected_label]
             
@@ -231,9 +234,10 @@ with tab2:
 with tab3:
     if not current_trans.empty:
         if 'timestamp' in current_trans.columns and 'date' in current_trans.columns:
-            # 【修正】先に並び替えてから、表示したい列だけ選ぶように修正しました
+            # 先にソート
             sorted_df = current_trans.sort_values(['date', 'timestamp'], ascending=[False, False])
-            display_df = sorted_df[['date', 'match_id', 'name', 'number', 'amount', 'season']]
+            # 【変更: season列を先頭に移動】
+            display_df = sorted_df[['season', 'date', 'match_id', 'name', 'number', 'amount']]
             st.dataframe(display_df, use_container_width=True)
         else:
             st.dataframe(current_trans, use_container_width=True)
@@ -249,9 +253,10 @@ with tab4:
         with st.form("add_schedule_form"):
             col1, col2 = st.columns(2)
             with col1:
-                in_season = st.text_input("シーズン (例: 2025)", value=str(datetime.now().year))
+                in_season = st.text_input("シーズン (例: 2025, 26-27)", value=str(datetime.now().year))
                 in_section = st.text_input("節 (例: 第5節)")
-                in_date = st.text_input("日付 (例: 4/1)")
+                # 【変更: 年も含めた入力例に変更】
+                in_date = st.text_input("日付 (例: 2025/4/1)")
             with col2:
                 in_opponent = st.text_input("対戦相手")
                 in_type = st.selectbox("開催", ["Home", "Away"])
