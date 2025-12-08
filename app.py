@@ -5,8 +5,6 @@ from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 import time
 import plotly.express as px
-import requests
-from bs4 import BeautifulSoup
 
 # --- ページ設定 ---
 st.set_page_config(page_title="男気チャンス", page_icon="⚽", layout="wide")
@@ -74,93 +72,22 @@ def calculate_amount(number, df_rates):
             continue
     return 1000
 
-# --- 関数: ジェフニュース取得 (スクレイピング) ---
-@st.cache_data(ttl=3600) # 1時間キャッシュ
-def get_jef_news():
-    url = "https://jefunited.co.jp/news/list"
-    # 【追加】ブラウザのふりをするための「変装セット」
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
-    }
-    
-    try:
-        # headersを指定してアクセス
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status() # エラーならここで例外を出す
-        
-        soup = BeautifulSoup(response.content, "html.parser")
-        
-        news_items = []
-        
-        # ニュースのリンクを探す（汎用的な検索）
-        # hrefに '/news/detail/' が含まれるリンクを全て集める
-        all_links = soup.find_all('a', href=True)
-        target_links = [a for a in all_links if '/news/detail/' in a['href']]
-
-        # 重複を除去しつつ、上から5つ取得
-        seen = set()
-        unique_links = []
-        for a in target_links:
-            link = a['href']
-            if link not in seen:
-                seen.add(link)
-                unique_links.append(a)
-                if len(unique_links) >= 5:
-                    break
-        
-        for a in unique_links:
-            link = a.get('href')
-            if link.startswith('/'):
-                link = f"https://jefunited.co.jp{link}"
-            
-            # テキスト抽出 (余計な空白を除去)
-            # 内部に日付タグなどがある場合も考慮してテキストを繋げる
-            text = " ".join(a.get_text().split())
-            
-            # もしテキストが空ならスキップ
-            if text:
-                news_items.append({"text": text, "link": link})
-            
-        return news_items
-    except Exception as e:
-        # デバッグ用: エラー内容をログに残す（StreamlitのManage appで見れる）
-        print(f"Scraping Error: {e}")
-        return None
-
 # --- 関数: ログイン処理 ---
 def login():
     if 'role' in st.session_state:
         return True
-    
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.title("⚽ 男気チャンス")
-        st.markdown("##### 合言葉を入力してください")
-        password = st.text_input("Password", type="password")
-        if st.button("Login"):
-            if password == st.secrets["passwords"]["admin"]:
-                st.session_state['role'] = 'admin'
-                st.rerun()
-            elif password == st.secrets["passwords"]["guest"]:
-                st.session_state['role'] = 'guest'
-                st.rerun()
-            else:
-                st.error("パスワードが違います")
-    
-    # --- ニュース表示エリア ---
-    st.divider()
-    st.subheader("📰 JEF UNITED 最新ニュース")
-    
-    news_list = get_jef_news()
-    if news_list:
-        for news in news_list:
-            # リンク付きテキストで表示
-            st.markdown(f"- [{news['text']}]({news['link']})")
-    else:
-        st.caption("ニュースの取得に失敗しました。公式サイトをご確認ください。")
-        st.link_button("公式サイトへ", "https://jefunited.co.jp/news/list")
-
+    st.title("⚽ 男気チャンス")
+    st.markdown("##### 合言葉を入力してください")
+    password = st.text_input("Password", type="password")
+    if st.button("Login"):
+        if password == st.secrets["passwords"]["admin"]:
+            st.session_state['role'] = 'admin'
+            st.rerun()
+        elif password == st.secrets["passwords"]["guest"]:
+            st.session_state['role'] = 'guest'
+            st.rerun()
+        else:
+            st.error("パスワードが違います")
     return False
 
 # ==========================================
@@ -245,7 +172,7 @@ with tab2:
             st.info(f"シーズン {selected_season} のホームゲーム予定が見つかりません。")
             st.info("「📅 日程追加」タブから日程を登録してください。")
         else:
-            # 日付判定ロジック
+            # 日付判定ロジック (デフォルトで次の試合を選択)
             match_options = []
             match_ids = []
             today = datetime.now().date()
@@ -253,18 +180,24 @@ with tab2:
             future_found = False
 
             for idx, row in home_games.iterrows():
+                # ラベルに日付を入れる
                 label = f"{row['date']} {row['section']} (vs {row['opponent']})"
                 match_options.append(label)
                 match_ids.append(row['section'])
+                
+                # まだ未来の試合が見つかっていない場合のみチェック
                 if not future_found:
                     try:
+                        # 日付文字列を日付型に変換
                         match_date = datetime.strptime(str(row['date']).strip(), '%Y/%m/%d').date()
+                        # 今日以降ならデフォルトにする
                         if match_date >= today:
                             default_index = len(match_options) - 1
                             future_found = True
                     except:
                         pass
             
+            # 全日程終了時は最後を選択
             if not future_found and match_options:
                 default_index = len(match_options) - 1
 
@@ -368,20 +301,4 @@ with tab5:
         st.subheader("👥 メンバー管理")
         st.info("※ `is_active` を **TRUE** で表示、**FALSE** で非表示")
         edited_mem = st.data_editor(
-            df_mem, num_rows="dynamic", use_container_width=True, key="editor_members",
-            column_config={
-                "is_active": st.column_config.SelectboxColumn("有効", options=["TRUE", "FALSE"], required=True),
-                "display_order": st.column_config.NumberColumn("並び順", min_value=1, step=1)
-            }
-        )
-        
-        if st.button("メンバー設定を保存する"):
-            try:
-                ws = get_worksheet("members")
-                ws.clear()
-                ws.update([edited_mem.columns.values.tolist()] + edited_mem.astype(str).values.tolist())
-                st.success("メンバー情報を更新しました！")
-                time.sleep(1)
-                st.rerun()
-            except Exception as e:
-                st.error(f"保存エラー: {e}")
+            df_mem, num_rows="dynamic", use_container_width=True, key="
