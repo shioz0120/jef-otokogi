@@ -48,7 +48,7 @@ def calculate_amount(number, df_rates):
     # ratesテーブルに基づいて計算
     for _, row in df_rates.iterrows():
         if row['min_rank'] <= number <= row['max_rank']:
-            return row['amount']
+            return int(row['amount'])  # <--- 【修正】int() で囲んで標準の整数にする
     return 1000 # 範囲外デフォルト
 
 # --- 関数: ログイン処理 ---
