@@ -39,14 +39,16 @@ def load_data():
     df_rates = load_data_from_sheet("rates")
     df_mem = load_data_from_sheet("members")
     
-    # 型変換
+    # 型変換とクリーニング
     if not df_trans.empty:
         df_trans.columns = df_trans.columns.str.strip()
         if 'amount' in df_trans.columns:
             df_trans['amount'] = pd.to_numeric(df_trans['amount'], errors='coerce').fillna(0)
         if 'number' in df_trans.columns:
             df_trans['number'] = pd.to_numeric(df_trans['number'], errors='coerce').fillna(0)
-            
+        if 'season' in df_trans.columns:
+            df_trans['season'] = df_trans['season'].astype(str).str.strip()
+
     if not df_rates.empty:
         df_rates.columns = df_rates.columns.str.strip()
         cols = ['min_rank', 'max_rank', 'amount']
@@ -74,11 +76,10 @@ def calculate_amount(number, df_rates):
             continue
     return 1000
 
-# --- 関数: RSSニュース取得 (RSS) ---
-@st.cache_data(ttl=3600) # 1時間ごとに更新
+# --- 関数: RSSニュース取得 ---
+@st.cache_data(ttl=3600)
 def get_jef_rss_news():
     url = "http://rss.phew.homeip.net/v10/10010.xml"
-    # ブラウザのふりをする
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     }
@@ -86,11 +87,10 @@ def get_jef_rss_news():
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         response.encoding = response.apparent_encoding
-        soup = BeautifulSoup(response.content, "html.parser") # html.parserで読み込み
+        soup = BeautifulSoup(response.content, "html.parser")
         
         items = soup.find_all("item")
         news_list = []
-        
         for item in items[:5]:
             title = item.title.text
             link = item.link.text
@@ -128,7 +128,7 @@ def login():
             else:
                 st.error("パスワードが違います")
     
-    # --- ニュース表示エリア ---
+    # ニュース表示
     st.divider()
     st.subheader("📰 公式最新ニュース")
     news_items = get_jef_rss_news()
@@ -194,30 +194,50 @@ with tab1:
             # 最新状態を取得（重複排除）
             df_latest = current_trans.sort_values('timestamp').drop_duplicates(subset=['match_id', 'name'], keep='last')
             
-            # --- 1. 集計と合計 ---
+            # 1. 通算ランキング
             ranking = df_latest.groupby('name')['amount'].sum().reset_index().sort_values('amount', ascending=False)
             total = ranking['amount'].sum()
             st.metric("男気トータル", f"¥{total:,}")
             
-            # --- 2. 円グラフと詳細表 ---
             col1, col2 = st.columns([2, 1])
             with col1:
                 fig = px.pie(ranking, values='amount', names='name', title='男気シェア', hole=0.4)
                 fig.update_traces(textinfo='percent+label')
                 st.plotly_chart(fig, use_container_width=True)
             with col2:
-                st.subheader("詳細データ")
-                st.dataframe(ranking.style.format({"amount": "¥{:,.0f}"}), hide_index=True, use_container_width=True)
+                st.subheader("👑 通算ランキング")
+                # インデックスを1から開始
+                ranking.index = range(1, len(ranking) + 1)
+                st.dataframe(ranking.style.format({"amount": "¥{:,.0f}"}), use_container_width=True)
 
-            # --- 3. 【復活】男気推移グラフ (折れ線) ---
+            st.divider()
+
+            # 2. 歴代高額支払い & 0円回数
+            c3, c4 = st.columns(2)
+            
+            with c3:
+                st.subheader("🔥 歴代高額支払い Best 5")
+                # 1回あたりの支払い額ランキング
+                high_score = df_latest.sort_values('amount', ascending=False).head(5)[['date', 'match_id', 'name', 'amount']]
+                high_score.index = range(1, len(high_score) + 1)
+                st.dataframe(high_score.style.format({"amount": "¥{:,.0f}"}), use_container_width=True)
+                
+            with c4:
+                st.subheader("🟢 倹約 (0円) 回数ランキング")
+                # 0円の回数をカウント
+                zero_counts = df_latest[df_latest['amount'] == 0].groupby('name').size().reset_index(name='count').sort_values('count', ascending=False)
+                zero_counts.index = range(1, len(zero_counts) + 1)
+                if not zero_counts.empty:
+                    st.dataframe(zero_counts, use_container_width=True)
+                else:
+                    st.write("まだ0円の人はいません")
+
+            # 3. 推移グラフ
+            st.divider()
             st.subheader("📈 男気金額の推移")
-            # 日付でソートして累積和を計算
             df_chart = df_latest.copy()
-            # 日付型に変換
             df_chart['date_dt'] = pd.to_datetime(df_chart['date'], errors='coerce')
             df_chart = df_chart.sort_values('date_dt')
-            
-            # 累積和の計算
             df_chart['cumulative_amount'] = df_chart.groupby('name')['amount'].cumsum()
             
             fig_line = px.line(
@@ -317,6 +337,7 @@ with tab3:
         if 'timestamp' in current_trans.columns and 'date' in current_trans.columns:
             sorted_df = current_trans.sort_values(['date', 'timestamp'], ascending=[False, False])
             
+            # 対戦相手表示ロジック
             display_df = sorted_df.copy()
             if not df_sched.empty and 'section' in df_sched.columns and 'opponent' in df_sched.columns:
                 sorted_df_merge = sorted_df.copy()
