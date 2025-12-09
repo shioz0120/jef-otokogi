@@ -5,6 +5,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 import time
 import plotly.express as px
+import requests
+from bs4 import BeautifulSoup
 
 # --- ページ設定 ---
 st.set_page_config(page_title="男気チャンス", page_icon="⚽", layout="wide")
@@ -72,22 +74,77 @@ def calculate_amount(number, df_rates):
             continue
     return 1000
 
+# --- 関数: RSSニュース取得 ---
+@st.cache_data(ttl=3600) # 1時間ごとに更新
+def get_jef_rss_news():
+    url = "http://rss.phew.homeip.net/v10/10010.xml"
+    try:
+        response = requests.get(url, timeout=5)
+        # XMLとしてパース
+        soup = BeautifulSoup(response.content, "xml")
+        
+        items = soup.find_all("item")
+        news_list = []
+        
+        # 最新5件を取得
+        for item in items[:5]:
+            title = item.title.text
+            link = item.link.text
+            # 日付情報 (dc:dateがあればそれを使うが、なければスキップ)
+            date_str = ""
+            dc_date = item.find("dc:date")
+            if dc_date:
+                # 例: 2025-12-09T12:00:00+09:00 -> 12/09
+                try:
+                    dt = datetime.strptime(dc_date.text[:10], "%Y-%m-%d")
+                    date_str = dt.strftime("%m/%d")
+                except:
+                    pass
+            
+            news_list.append({"date": date_str, "title": title, "link": link})
+            
+        return news_list
+    except Exception:
+        return []
+
 # --- 関数: ログイン処理 ---
 def login():
     if 'role' in st.session_state:
         return True
-    st.title("⚽ 男気チャンス")
-    st.markdown("##### 合言葉を入力してください")
-    password = st.text_input("Password", type="password")
-    if st.button("Login"):
-        if password == st.secrets["passwords"]["admin"]:
-            st.session_state['role'] = 'admin'
-            st.rerun()
-        elif password == st.secrets["passwords"]["guest"]:
-            st.session_state['role'] = 'guest'
-            st.rerun()
-        else:
-            st.error("パスワードが違います")
+    
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.title("⚽ 男気チャンス")
+        st.markdown("##### 合言葉を入力してください")
+        password = st.text_input("Password", type="password")
+        if st.button("Login"):
+            if password == st.secrets["passwords"]["admin"]:
+                st.session_state['role'] = 'admin'
+                st.rerun()
+            elif password == st.secrets["passwords"]["guest"]:
+                st.session_state['role'] = 'guest'
+                st.rerun()
+            else:
+                st.error("パスワードが違います")
+    
+    # --- ニュース表示エリア (RSS) ---
+    st.divider()
+    st.subheader("📰 ジェフ千葉 最新ニュース")
+    
+    news_items = get_jef_rss_news()
+    
+    if news_items:
+        for news in news_items:
+            # 日付がある場合は表示、なければタイトルのみ
+            if news['date']:
+                st.markdown(f"**{news['date']}** [{news['title']}]({news['link']})")
+            else:
+                st.markdown(f"- [{news['title']}]({news['link']})")
+        
+        st.caption("Source: JEF UNITED RSS")
+    else:
+        st.caption("ニュースの読み込みに失敗しました。")
+
     return False
 
 # ==========================================
@@ -114,7 +171,7 @@ season_options = ["全期間"] + season_list
 default_idx = 1 if len(season_options) > 1 else 0
 selected_season = st.sidebar.selectbox("シーズン表示切替", season_options, index=default_idx)
 
-# フィルタリング (表示用)
+# フィルタリング
 current_sched = pd.DataFrame()
 current_trans = pd.DataFrame()
 
@@ -129,34 +186,6 @@ else:
     if not df_trans.empty:
         current_trans = df_trans[df_trans['season'].astype(str) == str(selected_season)]
 
-# --- スケジュール情報とのマージ準備 (対戦相手名・正しい日付の取得用) ---
-merged_trans = pd.DataFrame()
-if not current_trans.empty:
-    merged_trans = current_trans.copy()
-    if 'date' not in merged_trans.columns: merged_trans['date'] = ''
-
-    if not df_sched.empty and 'section' in df_sched.columns:
-        merged_trans['season'] = merged_trans['season'].astype(str)
-        merged_trans['match_id'] = merged_trans['match_id'].astype(str)
-        
-        cols_to_use = ['season', 'section']
-        if 'opponent' in df_sched.columns: cols_to_use.append('opponent')
-        if 'date' in df_sched.columns: cols_to_use.append('date')
-            
-        sched_sub = df_sched[cols_to_use].copy()
-        sched_sub['season'] = sched_sub['season'].astype(str)
-        sched_sub['section'] = sched_sub['section'].astype(str)
-        
-        merged_trans = pd.merge(merged_trans, sched_sub, left_on=['season', 'match_id'], right_on=['season', 'section'], how='left', suffixes=('', '_sched'))
-        
-        if 'opponent' not in merged_trans.columns: merged_trans['opponent'] = '-'
-        else: merged_trans['opponent'] = merged_trans['opponent'].fillna('-')
-            
-        if 'date_sched' in merged_trans.columns:
-             merged_trans['date'] = merged_trans['date_sched'].combine_first(merged_trans['date'])
-    else:
-        merged_trans['opponent'] = '-'
-
 # --- タブ構成 ---
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 ランキング", "📝 入力", "📜 履歴", "📅 日程追加", "⚙️ 設定"])
 
@@ -165,10 +194,7 @@ with tab1:
     st.header(f"{selected_season} 男気ランキング")
     if not current_trans.empty:
         if 'timestamp' in current_trans.columns and 'amount' in current_trans.columns:
-            # 最新データ (重複排除)
             df_latest = current_trans.sort_values('timestamp').drop_duplicates(subset=['match_id', 'name'], keep='last')
-            
-            # --- 1. 基本ランキング (円グラフ & テーブル) ---
             ranking = df_latest.groupby('name')['amount'].sum().reset_index().sort_values('amount', ascending=False)
             total = ranking['amount'].sum()
             st.metric("男気トータル", f"¥{total:,}")
@@ -181,113 +207,6 @@ with tab1:
             with col2:
                 st.subheader("詳細データ")
                 st.dataframe(ranking.style.format({"amount": "¥{:,.0f}"}), hide_index=True, use_container_width=True)
-            
-            st.divider()
-
-            # --- 2. 累積男気 (累積データ) ---
-            st.subheader("累積男気（累積データ）")
-            
-            # 最新の日付補完済みデータを準備
-            df_period_line = merged_trans.sort_values(['date', 'timestamp']).drop_duplicates(subset=['season', 'match_id', 'name'], keep='last').copy()
-            
-            # 累積和を計算
-            df_period_line['cumulative_amount'] = df_period_line.groupby('name')['amount'].cumsum()
-            
-            # グラフ描画
-            fig_line = px.line(
-                df_period_line, 
-                x='date', 
-                y='cumulative_amount', 
-                color='name', 
-                markers=True,
-                title='累積男気',
-                labels={'cumulative_amount': '累積男気額', 'date': '試合日', 'name': '名前'}
-            )
-            st.plotly_chart(fig_line, use_container_width=True)
-
-            st.divider()
-            
-            # --- 3. 抽選番号 (ベスト/ワースト/平均) ---
-            st.subheader("抽選番号ランキング（抽選忘れ除く）")
-            
-            # 9999と0を除外
-            df_valid_num = merged_trans[(merged_trans['number'] > 0) & (merged_trans['number'] != 9999)]
-            
-            col_config = {
-                "rank": "順位",
-                "number": "番号",
-                "name": "名前"
-            }
-            
-            c_best, c_worst, c_avg = st.columns(3)
-            
-            with c_best:
-                st.markdown("##### ベスト5")
-                if not df_valid_num.empty:
-                    df_best = df_valid_num.sort_values('number', ascending=True).head(5).reset_index(drop=True)
-                    df_best['rank'] = df_best.index + 1
-                    st.dataframe(
-                        df_best[['rank', 'number', 'name']], 
-                        hide_index=True, 
-                        use_container_width=True,
-                        column_config={k: st.column_config.Column(v) for k, v in col_config.items()}
-                    )
-                else:
-                    st.caption("データなし")
-
-            with c_worst:
-                st.markdown("##### ワースト5")
-                if not df_valid_num.empty:
-                    df_worst = df_valid_num.sort_values('number', ascending=False).head(5).reset_index(drop=True)
-                    df_worst['rank'] = df_worst.index + 1
-                    st.dataframe(
-                        df_worst[['rank', 'number', 'name']], 
-                        hide_index=True, 
-                        use_container_width=True,
-                        column_config={k: st.column_config.Column(v) for k, v in col_config.items()}
-                    )
-                else:
-                    st.caption("データなし")
-            
-            with c_avg:
-                st.markdown("##### 平均抽選番号")
-                if not df_valid_num.empty:
-                    # 平均を計算
-                    df_avg = df_valid_num.groupby('name')['number'].mean().reset_index()
-                    # 小さい順（昇順）
-                    df_avg = df_avg.sort_values('number', ascending=True).reset_index(drop=True)
-                    df_avg['rank'] = df_avg.index + 1
-                    
-                    st.dataframe(
-                        df_avg[['rank', 'number', 'name']],
-                        hide_index=True,
-                        use_container_width=True,
-                        column_config={
-                            "rank": st.column_config.Column("順位"),
-                            "number": st.column_config.NumberColumn("平均番号", format="%.1f"),
-                            "name": st.column_config.Column("名前")
-                        }
-                    )
-                else:
-                    st.caption("データなし")
-
-            st.divider()
-
-            # --- 4. 抽選忘れ回数 ---
-            st.subheader("抽選忘れ回数")
-            df_9999 = merged_trans[merged_trans['number'] == 9999]
-            
-            if not df_9999.empty:
-                count_9999 = df_9999['name'].value_counts().reset_index()
-                count_9999.columns = ['名前', '回数']
-                
-                # 【変更】3列カラムの1つ目を使って、横幅を小さくする
-                c_miss_1, c_miss_2, c_miss_3 = st.columns(3)
-                with c_miss_1:
-                    st.dataframe(count_9999, hide_index=True, use_container_width=True)
-            else:
-                st.info("現在、抽選忘れ (9999) は誰もいません。")
-
         else:
              st.error(f"列不足エラー: {current_trans.columns.tolist()}")
     else:
@@ -312,7 +231,6 @@ with tab2:
         else:
             match_options = []
             match_ids = []
-            match_dates = {}
             today = datetime.now().date()
             default_index = 0
             future_found = False
@@ -321,7 +239,6 @@ with tab2:
                 label = f"{row['date']} {row['section']} (vs {row['opponent']})"
                 match_options.append(label)
                 match_ids.append(row['section'])
-                match_dates[row['section']] = str(row['date'])
                 if not future_found:
                     try:
                         match_date = datetime.strptime(str(row['date']).strip(), '%Y/%m/%d').date()
@@ -352,7 +269,7 @@ with tab2:
                 if st.form_submit_button("登録・更新"):
                     ws_trans = get_worksheet("transactions")
                     now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    date_str = match_dates.get(sel_match_id, datetime.now().strftime('%Y/%m/%d'))
+                    date_str = datetime.now().strftime('%Y/%m/%d')
                     tgt_season = selected_season if selected_season != "全期間" else str(datetime.now().year)
                     new_rows = []
                     cnt = 0
@@ -364,7 +281,7 @@ with tab2:
                     
                     if new_rows:
                         ws_trans.append_rows(new_rows)
-                        st.success(f"{cnt}件 保存しました！ (試合日: {date_str})")
+                        st.success(f"{cnt}件 保存しました！")
                         time.sleep(1)
                         st.rerun()
                     else:
@@ -372,16 +289,34 @@ with tab2:
 
 # === Tab 3: 履歴 ===
 with tab3:
-    if not merged_trans.empty:
-        if 'timestamp' in merged_trans.columns and 'date' in merged_trans.columns:
-            sorted_df = merged_trans.sort_values(['date', 'timestamp'], ascending=[False, False])
-        else:
-            sorted_df = merged_trans
+    if not current_trans.empty:
+        if 'timestamp' in current_trans.columns and 'date' in current_trans.columns:
+            sorted_df = current_trans.sort_values(['date', 'timestamp'], ascending=[False, False])
             
-        display_cols = ['season', 'date', 'match_id', 'opponent', 'name', 'number', 'amount']
-        display_cols = [c for c in display_cols if c in sorted_df.columns]
-        
-        st.dataframe(sorted_df[display_cols], use_container_width=True)
+            display_df = sorted_df.copy()
+            if not df_sched.empty and 'section' in df_sched.columns and 'opponent' in df_sched.columns:
+                sorted_df_merge = sorted_df.copy()
+                sorted_df_merge['season'] = sorted_df_merge['season'].astype(str)
+                sorted_df_merge['match_id'] = sorted_df_merge['match_id'].astype(str)
+                df_sched_merge = df_sched[['season', 'section', 'opponent']].copy()
+                df_sched_merge['season'] = df_sched_merge['season'].astype(str)
+                df_sched_merge['section'] = df_sched_merge['section'].astype(str)
+                
+                merged_df = pd.merge(
+                    sorted_df_merge,
+                    df_sched_merge,
+                    left_on=['season', 'match_id'],
+                    right_on=['season', 'section'],
+                    how='left'
+                )
+                merged_df['opponent'] = merged_df['opponent'].fillna('-')
+                display_cols = ['season', 'date', 'match_id', 'opponent', 'name', 'number', 'amount']
+                display_cols = [c for c in display_cols if c in merged_df.columns]
+                st.dataframe(merged_df[display_cols], use_container_width=True)
+            else:
+                st.dataframe(sorted_df[['season', 'date', 'match_id', 'name', 'number', 'amount']], use_container_width=True)
+        else:
+            st.dataframe(current_trans, use_container_width=True)
     else:
         st.write("履歴なし")
 
