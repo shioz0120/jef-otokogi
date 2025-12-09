@@ -130,7 +130,6 @@ else:
         current_trans = df_trans[df_trans['season'].astype(str) == str(selected_season)]
 
 # --- スケジュール情報とのマージ準備 (対戦相手名・正しい日付の取得用) ---
-# ※これは履歴表示やランキングで使う「フィルタ済み」データへのマージ
 merged_trans = pd.DataFrame()
 if not current_trans.empty:
     merged_trans = current_trans.copy()
@@ -185,45 +184,23 @@ with tab1:
             
             st.divider()
 
-            # --- 2. 累積男気 (折れ線グラフ) ---
-            st.subheader("累積男気")
+            # --- 2. 累積男気 (累積データ) ---
+            st.subheader("累積男気（累積データ）")
             
-            # 【修正】フィルタ前の全データ(df_trans)を使って累積を計算し、その後で表示期間を絞る
-            # まず全データに対して日付補完を行う
-            df_all_line = df_trans.copy()
-            if not df_sched.empty:
-                # 全スケジュールとマージして正しい日付を取得
-                sched_dates = df_sched[['season', 'section', 'date']].copy()
-                sched_dates.columns = ['season', 'match_id', 'date_sched']
-                sched_dates['season'] = sched_dates['season'].astype(str)
-                sched_dates['match_id'] = sched_dates['match_id'].astype(str)
-                df_all_line['season'] = df_all_line['season'].astype(str)
-                df_all_line['match_id'] = df_all_line['match_id'].astype(str)
-                
-                df_all_line = pd.merge(df_all_line, sched_dates, on=['season', 'match_id'], how='left')
-                if 'date_sched' in df_all_line.columns:
-                    df_all_line['date'] = df_all_line['date_sched'].combine_first(df_all_line['date'])
+            # 最新の日付補完済みデータを準備
+            df_period_line = merged_trans.sort_values(['date', 'timestamp']).drop_duplicates(subset=['season', 'match_id', 'name'], keep='last').copy()
             
-            # 重複排除とソート (全期間)
-            df_all_line = df_all_line.sort_values(['date', 'timestamp']).drop_duplicates(subset=['season', 'match_id', 'name'], keep='last')
+            # 累積和を計算
+            df_period_line['cumulative_amount'] = df_period_line.groupby('name')['amount'].cumsum()
             
-            # 累積和を計算 (全期間ベース)
-            df_all_line['cumulative_amount'] = df_all_line.groupby('name')['amount'].cumsum()
-            
-            # ここで表示期間(selected_season)に合わせてフィルタリング
-            if selected_season != "全期間":
-                df_display_line = df_all_line[df_all_line['season'].astype(str) == str(selected_season)].copy()
-            else:
-                df_display_line = df_all_line.copy()
-
             # グラフ描画
             fig_line = px.line(
-                df_display_line, 
+                df_period_line, 
                 x='date', 
                 y='cumulative_amount', 
                 color='name', 
                 markers=True,
-                title='累積男気 (全期間からの積み上げ)',
+                title='累積男気（累積データ）',
                 labels={'cumulative_amount': '累積男気額', 'date': '試合日', 'name': '名前'}
             )
             st.plotly_chart(fig_line, use_container_width=True)
@@ -231,12 +208,12 @@ with tab1:
             st.divider()
             
             # --- 3. 抽選番号 (ベスト/ワースト) ---
-            st.subheader("抽選番号")
+            # 【変更】タイトルを変更
+            st.subheader("抽選番号ランキング（抽選忘れ除く）")
             
             # 9999と0を除外
             df_valid_num = merged_trans[(merged_trans['number'] > 0) & (merged_trans['number'] != 9999)]
             
-            # 表示用カラム
             col_config = {
                 "rank": "順位",
                 "number": "番号",
@@ -249,9 +226,7 @@ with tab1:
                 st.markdown("##### ベスト5")
                 if not df_valid_num.empty:
                     df_best = df_valid_num.sort_values('number', ascending=True).head(5).reset_index(drop=True)
-                    # 【修正】順位列を追加 (index+1)
                     df_best['rank'] = df_best.index + 1
-                    
                     st.dataframe(
                         df_best[['rank', 'number', 'name']], 
                         hide_index=True, 
@@ -265,9 +240,7 @@ with tab1:
                 st.markdown("##### ワースト5")
                 if not df_valid_num.empty:
                     df_worst = df_valid_num.sort_values('number', ascending=False).head(5).reset_index(drop=True)
-                    # 【修正】順位列を追加
                     df_worst['rank'] = df_worst.index + 1
-                    
                     st.dataframe(
                         df_worst[['rank', 'number', 'name']], 
                         hide_index=True, 
@@ -276,19 +249,44 @@ with tab1:
                     )
                 else:
                     st.caption("データなし")
-
+            
             st.divider()
 
-            # --- 4. 抽選忘れ回数 ---
-            st.subheader("抽選忘れ回数")
-            df_9999 = merged_trans[merged_trans['number'] == 9999]
+            # --- 4. 平均抽選番号 & 抽選忘れ ---
+            c_avg, c_9999 = st.columns(2)
             
-            if not df_9999.empty:
-                count_9999 = df_9999['name'].value_counts().reset_index()
-                count_9999.columns = ['名前', '回数']
-                st.dataframe(count_9999, hide_index=True, use_container_width=False)
-            else:
-                st.info("現在、抽選忘れ (9999) は誰もいません。")
+            with c_avg:
+                st.subheader("平均抽選番号")
+                if not df_valid_num.empty:
+                    # 平均を計算
+                    df_avg = df_valid_num.groupby('name')['number'].mean().reset_index()
+                    # 小さい順（昇順）
+                    df_avg = df_avg.sort_values('number', ascending=True).reset_index(drop=True)
+                    df_avg['rank'] = df_avg.index + 1
+                    
+                    st.dataframe(
+                        df_avg[['rank', 'number', 'name']],
+                        hide_index=True,
+                        use_container_width=True,
+                        column_config={
+                            "rank": st.column_config.Column("順位"),
+                            "number": st.column_config.NumberColumn("平均番号", format="%.1f"),
+                            "name": st.column_config.Column("名前")
+                        }
+                    )
+                else:
+                    st.caption("データなし")
+
+            with c_9999:
+                st.subheader("抽選忘れ回数")
+                df_9999 = merged_trans[merged_trans['number'] == 9999]
+                
+                if not df_9999.empty:
+                    count_9999 = df_9999['name'].value_counts().reset_index()
+                    count_9999.columns = ['名前', '回数']
+                    st.dataframe(count_9999, hide_index=True, use_container_width=True)
+                else:
+                    st.info("現在、抽選忘れ (9999) は誰もいません。")
 
         else:
              st.error(f"列不足エラー: {current_trans.columns.tolist()}")
