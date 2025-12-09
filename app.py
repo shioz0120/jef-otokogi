@@ -74,14 +74,23 @@ def calculate_amount(number, df_rates):
             continue
     return 1000
 
-# --- 関数: RSSニュース取得 ---
+# --- 関数: RSSニュース取得 (改良版) ---
 @st.cache_data(ttl=3600) # 1時間ごとに更新
 def get_jef_rss_news():
     url = "http://rss.phew.homeip.net/v10/10010.xml"
+    # ブラウザのふりをする
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
     try:
-        response = requests.get(url, timeout=5)
-        # XMLとしてパース
-        soup = BeautifulSoup(response.content, "xml")
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status() # ステータスコードエラーチェック
+        
+        # 文字化け対策
+        response.encoding = response.apparent_encoding
+
+        # 'xml' パーサーではなく 'html.parser' を使用 (追加インストール不要で安定)
+        soup = BeautifulSoup(response.content, "html.parser")
         
         items = soup.find_all("item")
         news_list = []
@@ -90,11 +99,12 @@ def get_jef_rss_news():
         for item in items[:5]:
             title = item.title.text
             link = item.link.text
-            # 日付情報 (dc:dateがあればそれを使うが、なければスキップ)
+            
+            # 日付情報の取得 (dc:date タグを探す)
             date_str = ""
             dc_date = item.find("dc:date")
             if dc_date:
-                # 例: 2025-12-09T12:00:00+09:00 -> 12/09
+                # 例: 2025-12-09T... -> 12/09
                 try:
                     dt = datetime.strptime(dc_date.text[:10], "%Y-%m-%d")
                     date_str = dt.strftime("%m/%d")
@@ -104,7 +114,9 @@ def get_jef_rss_news():
             news_list.append({"date": date_str, "title": title, "link": link})
             
         return news_list
-    except Exception:
+    except Exception as e:
+        # ログにエラーを出力 (管理画面で確認可能)
+        print(f"RSS Error: {e}")
         return []
 
 # --- 関数: ログイン処理 ---
@@ -129,13 +141,12 @@ def login():
     
     # --- ニュース表示エリア (RSS) ---
     st.divider()
-    st.subheader("📰 ジェフ千葉 最新ニュース")
+    st.subheader("📰 公式最新ニュース") # 【変更】タイトル修正
     
     news_items = get_jef_rss_news()
     
     if news_items:
         for news in news_items:
-            # 日付がある場合は表示、なければタイトルのみ
             if news['date']:
                 st.markdown(f"**{news['date']}** [{news['title']}]({news['link']})")
             else:
@@ -340,52 +351,4 @@ with tab4:
             if st.form_submit_button("日程を追加する"):
                 if in_section and in_date and in_opp:
                     get_worksheet("schedule").append_row([in_season, in_section, in_date, in_opp, in_type, in_stad])
-                    st.success(f"{in_section} vs {in_opp} を追加しました！")
-                    time.sleep(1)
-                    st.rerun()
-                else:
-                    st.error("入力していない項目があります")
-
-# === Tab 5: 設定 ===
-with tab5:
-    st.header("⚙️ アプリ設定")
-    if st.session_state['role'] != 'admin':
-        st.warning("管理者のみ変更可能です")
-    else:
-        st.subheader("💰 レート設定")
-        edited_rates = st.data_editor(df_rates, num_rows="dynamic", use_container_width=True, key="editor_rates")
-        st.markdown("※ 抽選忘れは **9999** を入力")
-
-        if st.button("レート設定を保存する"):
-            try:
-                ws = get_worksheet("rates")
-                ws.clear()
-                ws.update([edited_rates.columns.values.tolist()] + edited_rates.astype(str).values.tolist())
-                st.success("レート設定を更新しました！")
-                time.sleep(1)
-                st.rerun()
-            except Exception as e:
-                st.error(f"保存エラー: {e}")
-
-        st.divider()
-
-        st.subheader("👥 メンバー管理")
-        st.info("※ `is_active` を **TRUE** で表示、**FALSE** で非表示")
-        edited_mem = st.data_editor(
-            df_mem, num_rows="dynamic", use_container_width=True, key="editor_members",
-            column_config={
-                "is_active": st.column_config.SelectboxColumn("有効", options=["TRUE", "FALSE"], required=True),
-                "display_order": st.column_config.NumberColumn("並び順", min_value=1, step=1)
-            }
-        )
-        
-        if st.button("メンバー設定を保存する"):
-            try:
-                ws = get_worksheet("members")
-                ws.clear()
-                ws.update([edited_mem.columns.values.tolist()] + edited_mem.astype(str).values.tolist())
-                st.success("メンバー情報を更新しました！")
-                time.sleep(1)
-                st.rerun()
-            except Exception as e:
-                st.error(f"保存エラー: {e}")
+                    st.success(f"{in_section} vs {in_
