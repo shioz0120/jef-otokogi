@@ -74,7 +74,7 @@ def calculate_amount(number, df_rates):
             continue
     return 1000
 
-# --- 関数: RSSニュース取得 (改良版) ---
+# --- 関数: RSSニュース取得 (RSS) ---
 @st.cache_data(ttl=3600) # 1時間ごとに更新
 def get_jef_rss_news():
     url = "http://rss.phew.homeip.net/v10/10010.xml"
@@ -84,38 +84,27 @@ def get_jef_rss_news():
     }
     try:
         response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status() # ステータスコードエラーチェック
-        
-        # 文字化け対策
+        response.raise_for_status()
         response.encoding = response.apparent_encoding
-
-        # 'xml' パーサーではなく 'html.parser' を使用 (追加インストール不要で安定)
-        soup = BeautifulSoup(response.content, "html.parser")
+        soup = BeautifulSoup(response.content, "html.parser") # html.parserで読み込み
         
         items = soup.find_all("item")
         news_list = []
         
-        # 最新5件を取得
         for item in items[:5]:
             title = item.title.text
             link = item.link.text
-            
-            # 日付情報の取得 (dc:date タグを探す)
             date_str = ""
             dc_date = item.find("dc:date")
             if dc_date:
-                # 例: 2025-12-09T... -> 12/09
                 try:
                     dt = datetime.strptime(dc_date.text[:10], "%Y-%m-%d")
                     date_str = dt.strftime("%m/%d")
                 except:
                     pass
-            
             news_list.append({"date": date_str, "title": title, "link": link})
-            
         return news_list
     except Exception as e:
-        # ログにエラーを出力 (管理画面で確認可能)
         print(f"RSS Error: {e}")
         return []
 
@@ -139,19 +128,16 @@ def login():
             else:
                 st.error("パスワードが違います")
     
-    # --- ニュース表示エリア (RSS) ---
+    # --- ニュース表示エリア ---
     st.divider()
-    st.subheader("📰 公式最新ニュース") # 【変更】タイトル修正
-    
+    st.subheader("📰 公式最新ニュース")
     news_items = get_jef_rss_news()
-    
     if news_items:
         for news in news_items:
             if news['date']:
                 st.markdown(f"**{news['date']}** [{news['title']}]({news['link']})")
             else:
                 st.markdown(f"- [{news['title']}]({news['link']})")
-        
         st.caption("Source: JEF UNITED RSS")
     else:
         st.caption("ニュースの読み込みに失敗しました。")
@@ -205,11 +191,15 @@ with tab1:
     st.header(f"{selected_season} 男気ランキング")
     if not current_trans.empty:
         if 'timestamp' in current_trans.columns and 'amount' in current_trans.columns:
+            # 最新状態を取得（重複排除）
             df_latest = current_trans.sort_values('timestamp').drop_duplicates(subset=['match_id', 'name'], keep='last')
+            
+            # --- 1. 集計と合計 ---
             ranking = df_latest.groupby('name')['amount'].sum().reset_index().sort_values('amount', ascending=False)
             total = ranking['amount'].sum()
             st.metric("男気トータル", f"¥{total:,}")
             
+            # --- 2. 円グラフと詳細表 ---
             col1, col2 = st.columns([2, 1])
             with col1:
                 fig = px.pie(ranking, values='amount', names='name', title='男気シェア', hole=0.4)
@@ -218,6 +208,29 @@ with tab1:
             with col2:
                 st.subheader("詳細データ")
                 st.dataframe(ranking.style.format({"amount": "¥{:,.0f}"}), hide_index=True, use_container_width=True)
+
+            # --- 3. 【復活】男気推移グラフ (折れ線) ---
+            st.subheader("📈 男気金額の推移")
+            # 日付でソートして累積和を計算
+            df_chart = df_latest.copy()
+            # 日付型に変換
+            df_chart['date_dt'] = pd.to_datetime(df_chart['date'], errors='coerce')
+            df_chart = df_chart.sort_values('date_dt')
+            
+            # 累積和の計算
+            df_chart['cumulative_amount'] = df_chart.groupby('name')['amount'].cumsum()
+            
+            fig_line = px.line(
+                df_chart, 
+                x='date', 
+                y='cumulative_amount', 
+                color='name', 
+                markers=True,
+                title='シーズン累積金額の推移'
+            )
+            fig_line.update_layout(xaxis_title="日付", yaxis_title="累積金額")
+            st.plotly_chart(fig_line, use_container_width=True)
+            
         else:
              st.error(f"列不足エラー: {current_trans.columns.tolist()}")
     else:
