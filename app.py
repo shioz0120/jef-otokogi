@@ -59,6 +59,9 @@ def load_data():
     if not df_mem.empty:
         df_mem.columns = df_mem.columns.str.strip()
         df_mem['display_order'] = pd.to_numeric(df_mem['display_order'], errors='coerce').fillna(999)
+        # 【追加】ランキング対象フラグがない場合の安全策（デフォルトはTRUE=対象）
+        if 'is_ranking_target' not in df_mem.columns:
+            df_mem['is_ranking_target'] = "TRUE"
 
     return df_trans, df_sched, df_rates, df_mem
 
@@ -215,7 +218,7 @@ if not current_trans.empty:
 # --- タブ構成 ---
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 ランキング", "📝 入力", "📜 履歴", "📅 日程追加", "⚙️ 設定"])
 
-# === Tab 1: ランキング ===
+# === Tab 1: ランキング (対象者のみ集計) ===
 with tab1:
     st.header(f"{selected_season} 男気ランキング")
     if not current_trans.empty:
@@ -223,10 +226,16 @@ with tab1:
             # 最新データ (重複排除)
             df_latest = current_trans.sort_values('timestamp').drop_duplicates(subset=['season', 'match_id', 'name'], keep='last')
             
-            # --- 1. 基本ランキング (円グラフ & テーブル) ---
-            ranking = df_latest.groupby('name')['amount'].sum().reset_index().sort_values('amount', ascending=False)
+            # 【追加機能】ランキング対象者のみに絞り込み
+            # is_ranking_target = TRUE の名前リストを取得
+            target_members = df_mem[df_mem['is_ranking_target'] == "TRUE"]['name'].tolist()
+            # 該当メンバーだけのデータにする
+            df_latest_ranked = df_latest[df_latest['name'].isin(target_members)]
+            
+            # --- 1. 基本ランキング ---
+            ranking = df_latest_ranked.groupby('name')['amount'].sum().reset_index().sort_values('amount', ascending=False)
             total = ranking['amount'].sum()
-            st.metric("男気トータル", f"¥{total:,}")
+            st.metric("男気トータル (集計対象のみ)", f"¥{total:,}")
             
             col1, col2 = st.columns([2, 1])
             with col1:
@@ -239,11 +248,12 @@ with tab1:
             
             st.divider()
 
-            # --- 2. 累積男気 (累積データ) ---
+            # --- 2. 累積男気 (対象者のみ) ---
             st.subheader("累積男気（累積データ）")
             
-            # 最新の日付補完済みデータを準備
+            # グラフ用のデータも対象者のみに絞る
             df_period_line = merged_trans.sort_values(['date', 'timestamp']).drop_duplicates(subset=['season', 'match_id', 'name'], keep='last').copy()
+            df_period_line = df_period_line[df_period_line['name'].isin(target_members)] # フィルター適用
             
             # 累積和を計算
             df_period_line['cumulative_amount'] = df_period_line.groupby('name')['amount'].cumsum()
@@ -262,11 +272,11 @@ with tab1:
 
             st.divider()
             
-            # --- 3. 抽選番号 (ベスト/ワースト/平均) ---
+            # --- 3. 抽選番号 (対象者のみ) ---
             st.subheader("抽選番号ランキング（抽選忘れ除く）")
             
-            # 9999と0を除外
-            df_valid_num = merged_trans[(merged_trans['number'] > 0) & (merged_trans['number'] != 9999)]
+            # 9999と0を除外 & 対象者のみ
+            df_valid_num = df_period_line[(df_period_line['number'] > 0) & (df_period_line['number'] != 9999)]
             
             col_config = {
                 "rank": "順位",
@@ -325,12 +335,13 @@ with tab1:
 
             st.divider()
 
-            # --- 4. 抽選忘れ回数 (レイアウト修正済み) ---
+            # --- 4. 抽選忘れ回数 (対象者のみ) ---
             c_missed, c_dummy1, c_dummy2 = st.columns(3)
             
             with c_missed:
                 st.subheader("⚠️ 抽選忘れ回数")
-                df_9999 = merged_trans[merged_trans['number'] == 9999]
+                # 対象者のみに絞ったデータからカウント
+                df_9999 = df_period_line[df_period_line['number'] == 9999]
                 
                 if not df_9999.empty:
                     count_9999 = df_9999['name'].value_counts().reset_index()
@@ -393,6 +404,7 @@ with tab2:
             st.info("💡 抽選忘れの場合は **9999** を入力してください")
 
             with st.form("input_form"):
+                # 入力画面は is_active=TRUE の全員を表示
                 active_mem = df_mem[df_mem['is_active'] == "TRUE"].sort_values('display_order')
                 inputs = {}
                 cols = st.columns(2)
@@ -421,20 +433,18 @@ with tab2:
                     else:
                         st.warning("番号を入力してください")
 
-# === Tab 3: 履歴 (絞り込み追加) ===
+# === Tab 3: 履歴 (全員検索可能) ===
 with tab3:
     if not merged_trans.empty:
-        # --- 追加機能: 名前で絞り込み ---
+        # 名前で絞り込み (全員分)
         unique_names = sorted(merged_trans['name'].unique().tolist())
         selected_member = st.selectbox("メンバー絞り込み", ["全員"] + unique_names)
         
-        # フィルタリング
         if selected_member != "全員":
             df_for_history = merged_trans[merged_trans['name'] == selected_member]
         else:
             df_for_history = merged_trans
             
-        # ソートと表示
         if 'timestamp' in df_for_history.columns and 'date' in df_for_history.columns:
             sorted_df = df_for_history.sort_values(['date', 'timestamp'], ascending=[False, False])
         else:
@@ -496,12 +506,22 @@ with tab5:
 
         st.divider()
 
+        # 【更新】メンバー管理 (説明書きと新カラム追加)
         st.subheader("👥 メンバー管理")
-        st.info("※ `is_active` を **TRUE** で表示、**FALSE** で非表示")
+        
+        # わかりやすい説明書きを追加
+        st.info("""
+        **設定項目の説明**
+        * **is_active**: 入力画面に名前を表示しますか？ (TRUE=表示 / FALSE=隠す)
+        * **is_ranking_target**: ランキング集計に含めますか？ (TRUE=集計する / FALSE=集計しない)
+        ※ ゲスト参加などは `is_active=TRUE`, `is_ranking_target=FALSE` に設定してください。
+        """)
+        
         edited_mem = st.data_editor(
             df_mem, num_rows="dynamic", use_container_width=True, key="editor_members",
             column_config={
-                "is_active": st.column_config.SelectboxColumn("有効", options=["TRUE", "FALSE"], required=True),
+                "is_active": st.column_config.SelectboxColumn("入力表示", options=["TRUE", "FALSE"], required=True),
+                "is_ranking_target": st.column_config.SelectboxColumn("集計対象", options=["TRUE", "FALSE"], required=True),
                 "display_order": st.column_config.NumberColumn("並び順", min_value=1, step=1)
             }
         )
