@@ -46,6 +46,8 @@ def load_data():
             df_trans['amount'] = pd.to_numeric(df_trans['amount'], errors='coerce').fillna(0)
         if 'number' in df_trans.columns:
             df_trans['number'] = pd.to_numeric(df_trans['number'], errors='coerce').fillna(0)
+        if 'season' in df_trans.columns:
+            df_trans['season'] = df_trans['season'].astype(str).str.strip()
             
     if not df_rates.empty:
         df_rates.columns = df_rates.columns.str.strip()
@@ -123,7 +125,7 @@ def login():
         else:
             st.error("パスワードが違います")
             
-    # --- ニュース表示 (ここだけ追加) ---
+    # --- ニュース表示 ---
     st.divider()
     st.subheader("📰 公式最新ニュース")
     news_items = get_jef_rss_news()
@@ -206,6 +208,10 @@ if not current_trans.empty:
     else:
         merged_trans['opponent'] = '-'
 
+    # 【追加】日付型に変換 (ソート不具合の修正)
+    if 'date' in merged_trans.columns:
+        merged_trans['date'] = pd.to_datetime(merged_trans['date'], errors='coerce').dt.date
+
 # --- タブ構成 ---
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 ランキング", "📝 入力", "📜 履歴", "📅 日程追加", "⚙️ 設定"])
 
@@ -237,6 +243,7 @@ with tab1:
             st.subheader("累積男気（累積データ）")
             
             # 最新の日付補完済みデータを準備
+            # date型に変換済みなのでソートが正確になる
             df_period_line = merged_trans.sort_values(['date', 'timestamp']).drop_duplicates(subset=['season', 'match_id', 'name'], keep='last').copy()
             
             # 累積和を計算
@@ -301,12 +308,9 @@ with tab1:
             with c_avg:
                 st.markdown("##### 平均抽選番号")
                 if not df_valid_num.empty:
-                    # 平均を計算
                     df_avg = df_valid_num.groupby('name')['number'].mean().reset_index()
-                    # 小さい順（昇順）
                     df_avg = df_avg.sort_values('number', ascending=True).reset_index(drop=True)
                     df_avg['rank'] = df_avg.index + 1
-                    
                     st.dataframe(
                         df_avg[['rank', 'number', 'name']],
                         hide_index=True,
