@@ -5,6 +5,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 import time
 import plotly.express as px
+import requests
+from bs4 import BeautifulSoup
 
 # --- ページ設定 ---
 st.set_page_config(page_title="男気チャンス", page_icon="⚽", layout="wide")
@@ -44,6 +46,8 @@ def load_data():
             df_trans['amount'] = pd.to_numeric(df_trans['amount'], errors='coerce').fillna(0)
         if 'number' in df_trans.columns:
             df_trans['number'] = pd.to_numeric(df_trans['number'], errors='coerce').fillna(0)
+        if 'season' in df_trans.columns:
+            df_trans['season'] = df_trans['season'].astype(str).str.strip()
             
     if not df_rates.empty:
         df_rates.columns = df_rates.columns.str.strip()
@@ -72,22 +76,73 @@ def calculate_amount(number, df_rates):
             continue
     return 1000
 
+# --- 関数: RSSニュース取得 (追加機能) ---
+@st.cache_data(ttl=3600)
+def get_jef_rss_news():
+    url = "http://rss.phew.homeip.net/v10/10010.xml"
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        response.encoding = response.apparent_encoding
+        # xmlパーサーではなくhtml.parserを使うことでエラー回避
+        soup = BeautifulSoup(response.content, "html.parser")
+        
+        items = soup.find_all("item")
+        news_list = []
+        for item in items[:5]:
+            title = item.title.text
+            link = item.link.text
+            date_str = ""
+            dc_date = item.find("dc:date")
+            if dc_date:
+                try:
+                    dt = datetime.strptime(dc_date.text[:10], "%Y-%m-%d")
+                    date_str = dt.strftime("%m/%d")
+                except:
+                    pass
+            news_list.append({"date": date_str, "title": title, "link": link})
+        return news_list
+    except Exception as e:
+        print(f"RSS Error: {e}")
+        return []
+
 # --- 関数: ログイン処理 ---
 def login():
     if 'role' in st.session_state:
         return True
-    st.title("⚽ 男気チャンス")
-    st.markdown("##### 合言葉を入力してください")
-    password = st.text_input("Password", type="password")
-    if st.button("Login"):
-        if password == st.secrets["passwords"]["admin"]:
-            st.session_state['role'] = 'admin'
-            st.rerun()
-        elif password == st.secrets["passwords"]["guest"]:
-            st.session_state['role'] = 'guest'
-            st.rerun()
-        else:
-            st.error("パスワードが違います")
+    
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.title("⚽ 男気チャンス")
+        st.markdown("##### 合言葉を入力してください")
+        password = st.text_input("Password", type="password")
+        if st.button("Login"):
+            if password == st.secrets["passwords"]["admin"]:
+                st.session_state['role'] = 'admin'
+                st.rerun()
+            elif password == st.secrets["passwords"]["guest"]:
+                st.session_state['role'] = 'guest'
+                st.rerun()
+            else:
+                st.error("パスワードが違います")
+    
+    # --- ニュース表示エリア (追加) ---
+    st.divider()
+    st.subheader("📰 ジェフ千葉 最新ニュース")
+    news_items = get_jef_rss_news()
+    if news_items:
+        for news in news_items:
+            if news['date']:
+                st.markdown(f"**{news['date']}** [{news['title']}]({news['link']})")
+            else:
+                st.markdown(f"- [{news['title']}]({news['link']})")
+        st.caption("Source: JEF UNITED RSS")
+    else:
+        st.caption("ニュースを読み込めませんでした")
+
     return False
 
 # ==========================================
@@ -158,132 +213,100 @@ if not current_trans.empty:
         merged_trans['opponent'] = '-'
 
 # --- タブ構成 ---
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 ランキング", "📝 入力", "📜 履歴", "📅 日程追加", "⚙️ 設定"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 データ分析", "📝 入力", "📜 履歴", "📅 日程追加", "⚙️ 設定"])
 
-# === Tab 1: ランキング ===
+# === Tab 1: データ分析 (ランキング・グラフ) ===
 with tab1:
-    st.header(f"{selected_season} 男気ランキング")
+    st.header(f"{selected_season} 男気データ分析")
+    
     if not current_trans.empty:
         if 'timestamp' in current_trans.columns and 'amount' in current_trans.columns:
             # 最新データ (重複排除)
             df_latest = current_trans.sort_values('timestamp').drop_duplicates(subset=['match_id', 'name'], keep='last')
             
-            # --- 1. 基本ランキング (円グラフ & テーブル) ---
+            # --- 1. 金額集計 ---
             ranking = df_latest.groupby('name')['amount'].sum().reset_index().sort_values('amount', ascending=False)
             total = ranking['amount'].sum()
-            st.metric("男気トータル", f"¥{total:,}")
+            st.metric("💰 男気トータル金額", f"¥{total:,}")
             
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                fig = px.pie(ranking, values='amount', names='name', title='男気シェア', hole=0.4)
+            # 円グラフ
+            c_pie, c_chart = st.columns([1, 2])
+            with c_pie:
+                fig = px.pie(ranking, values='amount', names='name', title='支払いシェア', hole=0.4)
                 fig.update_traces(textinfo='percent+label')
                 st.plotly_chart(fig, use_container_width=True)
-            with col2:
-                st.subheader("詳細データ")
-                st.dataframe(ranking.style.format({"amount": "¥{:,.0f}"}), hide_index=True, use_container_width=True)
             
-            st.divider()
-
-            # --- 2. 累積男気 (累積データ) ---
-            st.subheader("累積男気（累積データ）")
-            
-            # 最新の日付補完済みデータを準備
-            df_period_line = merged_trans.sort_values(['date', 'timestamp']).drop_duplicates(subset=['season', 'match_id', 'name'], keep='last').copy()
-            
-            # 累積和を計算
-            df_period_line['cumulative_amount'] = df_period_line.groupby('name')['amount'].cumsum()
-            
-            # グラフ描画
-            # 【修正】グラフタイトルを「累積男気」のみに変更
-            fig_line = px.line(
-                df_period_line, 
-                x='date', 
-                y='cumulative_amount', 
-                color='name', 
-                markers=True,
-                title='累積男気',
-                labels={'cumulative_amount': '累積男気額', 'date': '試合日', 'name': '名前'}
-            )
-            st.plotly_chart(fig_line, use_container_width=True)
-
-            st.divider()
-            
-            # --- 3. 抽選番号 (ベスト/ワースト/平均) ---
-            st.subheader("抽選番号ランキング（抽選忘れ除く）")
-            
-            # 9999と0を除外
-            df_valid_num = merged_trans[(merged_trans['number'] > 0) & (merged_trans['number'] != 9999)]
-            
-            col_config = {
-                "rank": "順位",
-                "number": "番号",
-                "name": "名前"
-            }
-            
-            c_best, c_worst, c_avg = st.columns(3)
-            
-            with c_best:
-                st.markdown("##### ベスト5")
-                if not df_valid_num.empty:
-                    df_best = df_valid_num.sort_values('number', ascending=True).head(5).reset_index(drop=True)
-                    df_best['rank'] = df_best.index + 1
-                    st.dataframe(
-                        df_best[['rank', 'number', 'name']], 
-                        hide_index=True, 
-                        use_container_width=True,
-                        column_config={k: st.column_config.Column(v) for k, v in col_config.items()}
-                    )
-                else:
-                    st.caption("データなし")
-
-            with c_worst:
-                st.markdown("##### ワースト5")
-                if not df_valid_num.empty:
-                    df_worst = df_valid_num.sort_values('number', ascending=False).head(5).reset_index(drop=True)
-                    df_worst['rank'] = df_worst.index + 1
-                    st.dataframe(
-                        df_worst[['rank', 'number', 'name']], 
-                        hide_index=True, 
-                        use_container_width=True,
-                        column_config={k: st.column_config.Column(v) for k, v in col_config.items()}
-                    )
-                else:
-                    st.caption("データなし")
-            
-            with c_avg:
-                st.markdown("##### 平均抽選番号")
-                if not df_valid_num.empty:
-                    # 平均を計算
-                    df_avg = df_valid_num.groupby('name')['number'].mean().reset_index()
-                    # 小さい順（昇順）
-                    df_avg = df_avg.sort_values('number', ascending=True).reset_index(drop=True)
-                    df_avg['rank'] = df_avg.index + 1
-                    
-                    st.dataframe(
-                        df_avg[['rank', 'number', 'name']],
-                        hide_index=True,
-                        use_container_width=True,
-                        column_config={
-                            "rank": st.column_config.Column("順位"),
-                            "number": st.column_config.NumberColumn("平均番号", format="%.1f"),
-                            "name": st.column_config.Column("名前")
-                        }
-                    )
-                else:
-                    st.caption("データなし")
+            # --- 2. 折れ線グラフ (累積推移) ---
+            with c_chart:
+                # 安定版のグラフロジック: merged_transを使って日付を正確にする
+                df_period_line = merged_trans.sort_values(['date', 'timestamp']).drop_duplicates(subset=['season', 'match_id', 'name'], keep='last').copy()
+                
+                # 累積和の計算
+                df_period_line['cumulative_amount'] = df_period_line.groupby('name')['amount'].cumsum()
+                
+                fig_line = px.line(
+                    df_period_line, 
+                    x='date', 
+                    y='cumulative_amount', 
+                    color='name', 
+                    markers=True,
+                    title='男気レース (累積金額の推移)'
+                )
+                fig_line.update_layout(xaxis_title="日付", yaxis_title="累積金額")
+                st.plotly_chart(fig_line, use_container_width=True)
 
             st.divider()
 
-            # --- 4. 抽選忘れ回数 ---
-            st.subheader("抽選忘れ回数")
-            df_9999 = merged_trans[merged_trans['number'] == 9999]
+            # --- 3. 番号ランキング集計 (安定版の機能) ---
+            # 9999(忘れ)と0(参加なし)を除いた純粋な抽選番号データ
+            df_nums = df_latest[(df_latest['number'] > 0) & (df_latest['number'] < 9999)]
             
-            if not df_9999.empty:
-                count_9999 = df_9999['name'].value_counts().reset_index()
-                count_9999.columns = ['名前', '回数']
-                st.dataframe(count_9999, hide_index=True, use_container_width=True)
-            else:
-                st.info("現在、抽選忘れ (9999) は誰もいません。")
+            col_b1, col_b2 = st.columns(2)
+            
+            with col_b1:
+                st.subheader("🍀 抽選番号 Best 5 (強運)")
+                st.caption("小さい番号を出したランキング")
+                if not df_nums.empty:
+                    best5 = df_nums.nsmallest(5, 'number')[['date', 'name', 'number', 'amount']]
+                    best5.index = range(1, len(best5) + 1)
+                    st.dataframe(best5, use_container_width=True)
+                else:
+                    st.write("データなし")
+
+            with col_b2:
+                st.subheader("💀 抽選番号 Worst 5 (男気)")
+                st.caption("大きい番号を出したランキング")
+                if not df_nums.empty:
+                    worst5 = df_nums.nlargest(5, 'number')[['date', 'name', 'number', 'amount']]
+                    worst5.index = range(1, len(worst5) + 1)
+                    st.dataframe(worst5, use_container_width=True)
+                else:
+                    st.write("データなし")
+
+            st.divider()
+
+            # --- 4. 平均と忘れ回数 (安定版の機能) ---
+            col_s1, col_s2 = st.columns(2)
+            
+            with col_s1:
+                st.subheader("🔢 平均抽選番号")
+                st.caption("※9999と0を除く")
+                if not df_nums.empty:
+                    avg_num = df_nums.groupby('name')['number'].mean().reset_index()
+                    avg_num.columns = ['Name', 'Average']
+                    avg_num = avg_num.sort_values('Average', ascending=False)
+                    st.dataframe(avg_num.style.format({"Average": "{:.1f}"}), use_container_width=True, hide_index=True)
+                else:
+                    st.write("データなし")
+
+            with col_s2:
+                st.subheader("⚠️ 抽選し忘れ (9999) 回数")
+                missed = df_latest[df_latest['number'] == 9999].groupby('name').size().reset_index(name='Count')
+                missed = missed.sort_values('Count', ascending=False)
+                if not missed.empty:
+                    st.dataframe(missed, use_container_width=True, hide_index=True)
+                else:
+                    st.write("まだ抽選忘れはありません！優秀！")
 
         else:
              st.error(f"列不足エラー: {current_trans.columns.tolist()}")
@@ -309,7 +332,6 @@ with tab2:
         else:
             match_options = []
             match_ids = []
-            match_dates = {}
             today = datetime.now().date()
             default_index = 0
             future_found = False
@@ -318,7 +340,6 @@ with tab2:
                 label = f"{row['date']} {row['section']} (vs {row['opponent']})"
                 match_options.append(label)
                 match_ids.append(row['section'])
-                match_dates[row['section']] = str(row['date'])
                 if not future_found:
                     try:
                         match_date = datetime.strptime(str(row['date']).strip(), '%Y/%m/%d').date()
@@ -349,7 +370,7 @@ with tab2:
                 if st.form_submit_button("登録・更新"):
                     ws_trans = get_worksheet("transactions")
                     now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    date_str = match_dates.get(sel_match_id, datetime.now().strftime('%Y/%m/%d'))
+                    date_str = datetime.now().strftime('%Y/%m/%d')
                     tgt_season = selected_season if selected_season != "全期間" else str(datetime.now().year)
                     new_rows = []
                     cnt = 0
@@ -361,7 +382,7 @@ with tab2:
                     
                     if new_rows:
                         ws_trans.append_rows(new_rows)
-                        st.success(f"{cnt}件 保存しました！ (試合日: {date_str})")
+                        st.success(f"{cnt}件 保存しました！")
                         time.sleep(1)
                         st.rerun()
                     else:
