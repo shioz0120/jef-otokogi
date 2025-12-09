@@ -194,13 +194,14 @@ with tab1:
             df_period_line['cumulative_amount'] = df_period_line.groupby('name')['amount'].cumsum()
             
             # グラフ描画
+            # 【修正】グラフタイトルを「累積男気」のみに変更
             fig_line = px.line(
                 df_period_line, 
                 x='date', 
                 y='cumulative_amount', 
                 color='name', 
                 markers=True,
-                title='累積男気（累積データ）',
+                title='累積男気',
                 labels={'cumulative_amount': '累積男気額', 'date': '試合日', 'name': '名前'}
             )
             st.plotly_chart(fig_line, use_container_width=True)
@@ -219,7 +220,6 @@ with tab1:
                 "name": "名前"
             }
             
-            # 【変更】3カラムにして横並びにする
             c_best, c_worst, c_avg = st.columns(3)
             
             with c_best:
@@ -281,7 +281,7 @@ with tab1:
             if not df_9999.empty:
                 count_9999 = df_9999['name'].value_counts().reset_index()
                 count_9999.columns = ['名前', '回数']
-                st.dataframe(count_9999, hide_index=True, use_container_width=False)
+                st.dataframe(count_9999, hide_index=True, use_container_width=True)
             else:
                 st.info("現在、抽選忘れ (9999) は誰もいません。")
 
