@@ -325,8 +325,7 @@ with tab1:
 
             st.divider()
 
-            # --- 4. 抽選忘れ回数 (レイアウト修正：カラムを切って幅を合わせる) ---
-            # 3カラム用意して、左端の1つだけを使う
+            # --- 4. 抽選忘れ回数 (レイアウト修正済み) ---
             c_missed, c_dummy1, c_dummy2 = st.columns(3)
             
             with c_missed:
@@ -422,13 +421,24 @@ with tab2:
                     else:
                         st.warning("番号を入力してください")
 
-# === Tab 3: 履歴 ===
+# === Tab 3: 履歴 (絞り込み追加) ===
 with tab3:
     if not merged_trans.empty:
-        if 'timestamp' in merged_trans.columns and 'date' in merged_trans.columns:
-            sorted_df = merged_trans.sort_values(['date', 'timestamp'], ascending=[False, False])
+        # --- 追加機能: 名前で絞り込み ---
+        unique_names = sorted(merged_trans['name'].unique().tolist())
+        selected_member = st.selectbox("メンバー絞り込み", ["全員"] + unique_names)
+        
+        # フィルタリング
+        if selected_member != "全員":
+            df_for_history = merged_trans[merged_trans['name'] == selected_member]
         else:
-            sorted_df = merged_trans
+            df_for_history = merged_trans
+            
+        # ソートと表示
+        if 'timestamp' in df_for_history.columns and 'date' in df_for_history.columns:
+            sorted_df = df_for_history.sort_values(['date', 'timestamp'], ascending=[False, False])
+        else:
+            sorted_df = df_for_history
             
         display_cols = ['season', 'date', 'match_id', 'opponent', 'name', 'number', 'amount']
         display_cols = [c for c in display_cols if c in sorted_df.columns]
