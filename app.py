@@ -128,19 +128,16 @@ def login():
         else:
             st.error("パスワードが違います")
             
-    # --- ニュース表示 (リンク修正版) ---
+    # --- ニュース表示 ---
     st.divider()
     st.subheader("📰 公式最新ニュース")
     news_items = get_jef_rss_news()
     if news_items:
         for news in news_items:
-            # HTMLタグを使用して target="_blank" (新しいタブ) を指定
             if news['date']:
-                link_html = f"**{news['date']}** <a href='{news['link']}' target='_blank' rel='noopener noreferrer'>{news['title']}</a>"
-                st.markdown(link_html, unsafe_allow_html=True)
+                st.markdown(f"**{news['date']}** <a href='{news['link']}' target='_blank' rel='noopener noreferrer'>{news['title']}</a>", unsafe_allow_html=True)
             else:
-                link_html = f"- <a href='{news['link']}' target='_blank' rel='noopener noreferrer'>{news['title']}</a>"
-                st.markdown(link_html, unsafe_allow_html=True)
+                st.markdown(f"- <a href='{news['link']}' target='_blank' rel='noopener noreferrer'>{news['title']}</a>", unsafe_allow_html=True)
         st.caption("Source: JEF UNITED RSS")
     else:
         st.caption("ニュースを読み込めませんでした。")
@@ -506,12 +503,13 @@ with tab5:
 
         st.subheader("👥 メンバー管理")
         
+        # 【修正】日本語表記に合わせて説明文を変更
         st.info("""
         **設定項目の説明**
-        * **is_active**: 入力画面に名前を表示しますか？ (TRUE=表示 / FALSE=隠す)
-        * **is_ranking_target**: ランキング集計に含めますか？ (TRUE=集計する / FALSE=集計しない)
+        * **入力表示**: 入力画面に名前を表示しますか？ (TRUE=表示 / FALSE=隠す)
+        * **集計対象**: ランキング集計に含めますか？ (TRUE=集計する / FALSE=集計しない)
 
-        ※ ゲスト参加などは `is_active=TRUE`, `is_ranking_target=FALSE` に設定してください。
+        ※ ゲスト参加などは `入力表示=TRUE`, `集計対象=FALSE` に設定してください。
         """)
         
         edited_mem = st.data_editor(
