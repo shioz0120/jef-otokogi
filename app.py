@@ -114,7 +114,7 @@ season_options = ["全期間"] + season_list
 default_idx = 1 if len(season_options) > 1 else 0
 selected_season = st.sidebar.selectbox("シーズン表示切替", season_options, index=default_idx)
 
-# フィルタリング
+# フィルタリング (表示用)
 current_sched = pd.DataFrame()
 current_trans = pd.DataFrame()
 
@@ -130,45 +130,29 @@ else:
         current_trans = df_trans[df_trans['season'].astype(str) == str(selected_season)]
 
 # --- スケジュール情報とのマージ準備 (対戦相手名・正しい日付の取得用) ---
+# ※これは履歴表示やランキングで使う「フィルタ済み」データへのマージ
 merged_trans = pd.DataFrame()
 if not current_trans.empty:
     merged_trans = current_trans.copy()
-    
-    # 日付列がない場合の保険
-    if 'date' not in merged_trans.columns:
-        merged_trans['date'] = ''
+    if 'date' not in merged_trans.columns: merged_trans['date'] = ''
 
     if not df_sched.empty and 'section' in df_sched.columns:
         merged_trans['season'] = merged_trans['season'].astype(str)
         merged_trans['match_id'] = merged_trans['match_id'].astype(str)
         
-        # マージに必要な列を準備
         cols_to_use = ['season', 'section']
-        if 'opponent' in df_sched.columns:
-            cols_to_use.append('opponent')
-        if 'date' in df_sched.columns:
-            cols_to_use.append('date')
+        if 'opponent' in df_sched.columns: cols_to_use.append('opponent')
+        if 'date' in df_sched.columns: cols_to_use.append('date')
             
         sched_sub = df_sched[cols_to_use].copy()
         sched_sub['season'] = sched_sub['season'].astype(str)
         sched_sub['section'] = sched_sub['section'].astype(str)
         
-        # マージ
-        merged_trans = pd.merge(
-            merged_trans,
-            sched_sub,
-            left_on=['season', 'match_id'],
-            right_on=['season', 'section'],
-            how='left',
-            suffixes=('', '_sched') # dateが重複したら date_sched になる
-        )
+        merged_trans = pd.merge(merged_trans, sched_sub, left_on=['season', 'match_id'], right_on=['season', 'section'], how='left', suffixes=('', '_sched'))
         
-        if 'opponent' not in merged_trans.columns:
-            merged_trans['opponent'] = '-'
-        else:
-            merged_trans['opponent'] = merged_trans['opponent'].fillna('-')
+        if 'opponent' not in merged_trans.columns: merged_trans['opponent'] = '-'
+        else: merged_trans['opponent'] = merged_trans['opponent'].fillna('-')
             
-        # スケジュールの日付があれば優先して上書き（これで入力日ではなく試合日になる）
         if 'date_sched' in merged_trans.columns:
              merged_trans['date'] = merged_trans['date_sched'].combine_first(merged_trans['date'])
     else:
@@ -194,269 +178,4 @@ with tab1:
             with col1:
                 fig = px.pie(ranking, values='amount', names='name', title='男気シェア', hole=0.4)
                 fig.update_traces(textinfo='percent+label')
-                st.plotly_chart(fig, use_container_width=True)
-            with col2:
-                st.subheader("詳細データ")
-                st.dataframe(ranking.style.format({"amount": "¥{:,.0f}"}), hide_index=True, use_container_width=True)
-            
-            st.divider()
-
-            # --- 2. 累積男気 (折れ線グラフ) ---
-            st.subheader("累積男気")
-            
-            # 正しい日付を使うために merged_trans から必要な情報を再取得
-            # df_latest は current_trans ベースなので日付が古い可能性があるため、match_idとnameでマージして日付を補完
-            if not merged_trans.empty:
-                # 必要な列だけにして重複排除
-                date_map = merged_trans[['season', 'match_id', 'date']].drop_duplicates()
-                df_line = pd.merge(df_latest, date_map, on=['season', 'match_id'], how='left', suffixes=('_old', ''))
-                # date列ができたので、もしdateがNaNなら古いdateを使う
-                if 'date_old' in df_line.columns:
-                    df_line['date'] = df_line['date'].fillna(df_line['date_old'])
-            else:
-                df_line = df_latest.copy()
-
-            # 日付順にソート
-            df_line = df_line.sort_values(['date', 'timestamp'])
-            # 累積和
-            df_line['cumulative_amount'] = df_line.groupby('name')['amount'].cumsum()
-            
-            # グラフ描画
-            fig_line = px.line(
-                df_line, 
-                x='date', # X軸は日付のみ
-                y='cumulative_amount', 
-                color='name', 
-                markers=True,
-                title='累積男気',
-                labels={'cumulative_amount': '累積男気額', 'date': '試合日', 'name': '名前'}
-            )
-            st.plotly_chart(fig_line, use_container_width=True)
-
-            st.divider()
-            
-            # --- 3. 抽選番号 (ベスト/ワースト) ---
-            st.subheader("抽選番号")
-            
-            # 9999と0を除外 (merged_transを使うので日付も正しい)
-            df_valid_num = merged_trans[(merged_trans['number'] > 0) & (merged_trans['number'] != 9999)]
-            
-            # 表示用カラム (番号と名前のみ)
-            cols_disp = ['number', 'name']
-            # 見出し日本語化用マッピング
-            col_config = {
-                "number": "番号",
-                "name": "名前"
-            }
-            
-            c_best, c_worst = st.columns(2)
-            
-            with c_best:
-                st.markdown("##### ベスト5")
-                if not df_valid_num.empty:
-                    df_best = df_valid_num.sort_values('number', ascending=True).head(5)
-                    # インデックスを隠して表示
-                    st.dataframe(
-                        df_best[cols_disp], 
-                        hide_index=True, 
-                        use_container_width=True,
-                        column_config={k: st.column_config.Column(v) for k, v in col_config.items()}
-                    )
-                else:
-                    st.caption("データなし")
-
-            with c_worst:
-                st.markdown("##### ワースト5")
-                if not df_valid_num.empty:
-                    df_worst = df_valid_num.sort_values('number', ascending=False).head(5)
-                    st.dataframe(
-                        df_worst[cols_disp], 
-                        hide_index=True, 
-                        use_container_width=True,
-                        column_config={k: st.column_config.Column(v) for k, v in col_config.items()}
-                    )
-                else:
-                    st.caption("データなし")
-
-            st.divider()
-
-            # --- 4. 抽選忘れ回数 (テーブルのみ) ---
-            st.subheader("抽選忘れ回数")
-            df_9999 = merged_trans[merged_trans['number'] == 9999]
-            
-            if not df_9999.empty:
-                # 集計
-                count_9999 = df_9999['name'].value_counts().reset_index()
-                count_9999.columns = ['名前', '回数']
-                
-                # シンプルな表で表示
-                st.dataframe(count_9999, hide_index=True, use_container_width=False)
-            else:
-                st.info("現在、抽選忘れ (9999) は誰もいません。")
-
-        else:
-             st.error(f"列不足エラー: {current_trans.columns.tolist()}")
-    else:
-        st.info("データがまだありません")
-
-# === Tab 2: 入力 (Adminのみ) ===
-with tab2:
-    if st.session_state['role'] != 'admin':
-        st.warning("ゲストは閲覧のみです")
-    else:
-        with st.expander("💰 現在のレート表を確認する"):
-            st.dataframe(df_rates, hide_index=True)
-            st.caption("※ 抽選忘れは **9999** を入力してください")
-
-        home_games = pd.DataFrame()
-        if not current_sched.empty:
-            home_games = current_sched[current_sched['type'] == 'Home']
-        
-        if home_games.empty:
-            st.info(f"シーズン {selected_season} のホームゲーム予定が見つかりません。")
-            st.info("「📅 日程追加」タブから日程を登録してください。")
-        else:
-            match_options = []
-            match_ids = []
-            match_dates = {}
-            today = datetime.now().date()
-            default_index = 0
-            future_found = False
-            
-            for idx, row in home_games.iterrows():
-                label = f"{row['date']} {row['section']} (vs {row['opponent']})"
-                match_options.append(label)
-                match_ids.append(row['section'])
-                match_dates[row['section']] = str(row['date'])
-                if not future_found:
-                    try:
-                        match_date = datetime.strptime(str(row['date']).strip(), '%Y/%m/%d').date()
-                        if match_date >= today:
-                            default_index = len(match_options) - 1
-                            future_found = True
-                    except:
-                        pass
-            
-            if not future_found and match_options:
-                default_index = len(match_options) - 1
-
-            sel_label = st.selectbox("試合を選択", match_options, index=default_index)
-            sel_index = match_options.index(sel_label)
-            sel_match_id = match_ids[sel_index]
-            
-            st.subheader("一括入力")
-            st.info("💡 抽選忘れの場合は **9999** を入力してください")
-
-            with st.form("input_form"):
-                active_mem = df_mem[df_mem['is_active'] == "TRUE"].sort_values('display_order')
-                inputs = {}
-                cols = st.columns(2)
-                for idx, row in active_mem.iterrows():
-                    with cols[idx % 2]:
-                        inputs[row['name']] = st.number_input(f"{row['name']}", min_value=0, step=1, key=f"in_{row['name']}")
-                
-                if st.form_submit_button("登録・更新"):
-                    ws_trans = get_worksheet("transactions")
-                    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    date_str = match_dates.get(sel_match_id, datetime.now().strftime('%Y/%m/%d'))
-                    tgt_season = selected_season if selected_season != "全期間" else str(datetime.now().year)
-                    new_rows = []
-                    cnt = 0
-                    for name, num in inputs.items():
-                        if num > 0:
-                            amt = calculate_amount(num, df_rates)
-                            new_rows.append([date_str, str(tgt_season), sel_match_id, name, num, amt, now_str])
-                            cnt += 1
-                    
-                    if new_rows:
-                        ws_trans.append_rows(new_rows)
-                        st.success(f"{cnt}件 保存しました！ (試合日: {date_str})")
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.warning("番号を入力してください")
-
-# === Tab 3: 履歴 ===
-with tab3:
-    if not merged_trans.empty:
-        if 'timestamp' in merged_trans.columns and 'date' in merged_trans.columns:
-            sorted_df = merged_trans.sort_values(['date', 'timestamp'], ascending=[False, False])
-        else:
-            sorted_df = merged_trans
-            
-        display_cols = ['season', 'date', 'match_id', 'opponent', 'name', 'number', 'amount']
-        display_cols = [c for c in display_cols if c in sorted_df.columns]
-        
-        st.dataframe(sorted_df[display_cols], use_container_width=True)
-    else:
-        st.write("履歴なし")
-
-# === Tab 4: 日程追加 (Adminのみ) ===
-with tab4:
-    st.header("📅 新しい試合日程の追加")
-    if st.session_state['role'] != 'admin':
-        st.warning("管理者のみ追加可能です")
-    else:
-        with st.form("add_schedule_form"):
-            c1, c2 = st.columns(2)
-            with c1:
-                in_season = st.text_input("シーズン (例: 2025)", value=str(datetime.now().year))
-                in_section = st.text_input("節 (例: 第5節)")
-                in_date = st.text_input("日付 (例: 2025/4/1)")
-            with c2:
-                in_opp = st.text_input("対戦相手")
-                in_type = st.selectbox("開催", ["Home", "Away"])
-                in_stad = st.text_input("スタジアム", value="フクアリ")
-
-            if st.form_submit_button("日程を追加する"):
-                if in_section and in_date and in_opp:
-                    get_worksheet("schedule").append_row([in_season, in_section, in_date, in_opp, in_type, in_stad])
-                    st.success(f"{in_section} vs {in_opp} を追加しました！")
-                    time.sleep(1)
-                    st.rerun()
-                else:
-                    st.error("入力していない項目があります")
-
-# === Tab 5: 設定 ===
-with tab5:
-    st.header("⚙️ アプリ設定")
-    if st.session_state['role'] != 'admin':
-        st.warning("管理者のみ変更可能です")
-    else:
-        st.subheader("💰 レート設定")
-        edited_rates = st.data_editor(df_rates, num_rows="dynamic", use_container_width=True, key="editor_rates")
-        st.markdown("※ 抽選忘れは **9999** を入力")
-
-        if st.button("レート設定を保存する"):
-            try:
-                ws = get_worksheet("rates")
-                ws.clear()
-                ws.update([edited_rates.columns.values.tolist()] + edited_rates.astype(str).values.tolist())
-                st.success("レート設定を更新しました！")
-                time.sleep(1)
-                st.rerun()
-            except Exception as e:
-                st.error(f"保存エラー: {e}")
-
-        st.divider()
-
-        st.subheader("👥 メンバー管理")
-        st.info("※ `is_active` を **TRUE** で表示、**FALSE** で非表示")
-        edited_mem = st.data_editor(
-            df_mem, num_rows="dynamic", use_container_width=True, key="editor_members",
-            column_config={
-                "is_active": st.column_config.SelectboxColumn("有効", options=["TRUE", "FALSE"], required=True),
-                "display_order": st.column_config.NumberColumn("並び順", min_value=1, step=1)
-            }
-        )
-        
-        if st.button("メンバー設定を保存する"):
-            try:
-                ws = get_worksheet("members")
-                ws.clear()
-                ws.update([edited_mem.columns.values.tolist()] + edited_mem.astype(str).values.tolist())
-                st.success("メンバー情報を更新しました！")
-                time.sleep(1)
-                st.rerun()
-            except Exception as e:
-                st.error(f"保存エラー: {e}")
+                st.
