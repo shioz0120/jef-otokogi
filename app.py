@@ -178,4 +178,281 @@ with tab1:
             with col1:
                 fig = px.pie(ranking, values='amount', names='name', title='男気シェア', hole=0.4)
                 fig.update_traces(textinfo='percent+label')
-                st.
+                st.plotly_chart(fig, use_container_width=True)
+            with col2:
+                st.subheader("詳細データ")
+                st.dataframe(ranking.style.format({"amount": "¥{:,.0f}"}), hide_index=True, use_container_width=True)
+            
+            st.divider()
+
+            # --- 2. 累積男気 (折れ線グラフ) ---
+            st.subheader("累積男気")
+            
+            # 【修正】フィルタ前の全データ(df_trans)を使って累積を計算し、その後で表示期間を絞る
+            # まず全データに対して日付補完を行う
+            df_all_line = df_trans.copy()
+            if not df_sched.empty:
+                # 全スケジュールとマージして正しい日付を取得
+                sched_dates = df_sched[['season', 'section', 'date']].copy()
+                sched_dates.columns = ['season', 'match_id', 'date_sched']
+                sched_dates['season'] = sched_dates['season'].astype(str)
+                sched_dates['match_id'] = sched_dates['match_id'].astype(str)
+                df_all_line['season'] = df_all_line['season'].astype(str)
+                df_all_line['match_id'] = df_all_line['match_id'].astype(str)
+                
+                df_all_line = pd.merge(df_all_line, sched_dates, on=['season', 'match_id'], how='left')
+                if 'date_sched' in df_all_line.columns:
+                    df_all_line['date'] = df_all_line['date_sched'].combine_first(df_all_line['date'])
+            
+            # 重複排除とソート (全期間)
+            df_all_line = df_all_line.sort_values(['date', 'timestamp']).drop_duplicates(subset=['season', 'match_id', 'name'], keep='last')
+            
+            # 累積和を計算 (全期間ベース)
+            df_all_line['cumulative_amount'] = df_all_line.groupby('name')['amount'].cumsum()
+            
+            # ここで表示期間(selected_season)に合わせてフィルタリング
+            if selected_season != "全期間":
+                df_display_line = df_all_line[df_all_line['season'].astype(str) == str(selected_season)].copy()
+            else:
+                df_display_line = df_all_line.copy()
+
+            # グラフ描画
+            fig_line = px.line(
+                df_display_line, 
+                x='date', 
+                y='cumulative_amount', 
+                color='name', 
+                markers=True,
+                title='累積男気 (全期間からの積み上げ)',
+                labels={'cumulative_amount': '累積男気額', 'date': '試合日', 'name': '名前'}
+            )
+            st.plotly_chart(fig_line, use_container_width=True)
+
+            st.divider()
+            
+            # --- 3. 抽選番号 (ベスト/ワースト) ---
+            st.subheader("抽選番号")
+            
+            # 9999と0を除外
+            df_valid_num = merged_trans[(merged_trans['number'] > 0) & (merged_trans['number'] != 9999)]
+            
+            # 表示用カラム
+            col_config = {
+                "rank": "順位",
+                "number": "番号",
+                "name": "名前"
+            }
+            
+            c_best, c_worst = st.columns(2)
+            
+            with c_best:
+                st.markdown("##### ベスト5")
+                if not df_valid_num.empty:
+                    df_best = df_valid_num.sort_values('number', ascending=True).head(5).reset_index(drop=True)
+                    # 【修正】順位列を追加 (index+1)
+                    df_best['rank'] = df_best.index + 1
+                    
+                    st.dataframe(
+                        df_best[['rank', 'number', 'name']], 
+                        hide_index=True, 
+                        use_container_width=True,
+                        column_config={k: st.column_config.Column(v) for k, v in col_config.items()}
+                    )
+                else:
+                    st.caption("データなし")
+
+            with c_worst:
+                st.markdown("##### ワースト5")
+                if not df_valid_num.empty:
+                    df_worst = df_valid_num.sort_values('number', ascending=False).head(5).reset_index(drop=True)
+                    # 【修正】順位列を追加
+                    df_worst['rank'] = df_worst.index + 1
+                    
+                    st.dataframe(
+                        df_worst[['rank', 'number', 'name']], 
+                        hide_index=True, 
+                        use_container_width=True,
+                        column_config={k: st.column_config.Column(v) for k, v in col_config.items()}
+                    )
+                else:
+                    st.caption("データなし")
+
+            st.divider()
+
+            # --- 4. 抽選忘れ回数 ---
+            st.subheader("抽選忘れ回数")
+            df_9999 = merged_trans[merged_trans['number'] == 9999]
+            
+            if not df_9999.empty:
+                count_9999 = df_9999['name'].value_counts().reset_index()
+                count_9999.columns = ['名前', '回数']
+                st.dataframe(count_9999, hide_index=True, use_container_width=False)
+            else:
+                st.info("現在、抽選忘れ (9999) は誰もいません。")
+
+        else:
+             st.error(f"列不足エラー: {current_trans.columns.tolist()}")
+    else:
+        st.info("データがまだありません")
+
+# === Tab 2: 入力 (Adminのみ) ===
+with tab2:
+    if st.session_state['role'] != 'admin':
+        st.warning("ゲストは閲覧のみです")
+    else:
+        with st.expander("💰 現在のレート表を確認する"):
+            st.dataframe(df_rates, hide_index=True)
+            st.caption("※ 抽選忘れは **9999** を入力してください")
+
+        home_games = pd.DataFrame()
+        if not current_sched.empty:
+            home_games = current_sched[current_sched['type'] == 'Home']
+        
+        if home_games.empty:
+            st.info(f"シーズン {selected_season} のホームゲーム予定が見つかりません。")
+            st.info("「📅 日程追加」タブから日程を登録してください。")
+        else:
+            match_options = []
+            match_ids = []
+            match_dates = {}
+            today = datetime.now().date()
+            default_index = 0
+            future_found = False
+            
+            for idx, row in home_games.iterrows():
+                label = f"{row['date']} {row['section']} (vs {row['opponent']})"
+                match_options.append(label)
+                match_ids.append(row['section'])
+                match_dates[row['section']] = str(row['date'])
+                if not future_found:
+                    try:
+                        match_date = datetime.strptime(str(row['date']).strip(), '%Y/%m/%d').date()
+                        if match_date >= today:
+                            default_index = len(match_options) - 1
+                            future_found = True
+                    except:
+                        pass
+            
+            if not future_found and match_options:
+                default_index = len(match_options) - 1
+
+            sel_label = st.selectbox("試合を選択", match_options, index=default_index)
+            sel_index = match_options.index(sel_label)
+            sel_match_id = match_ids[sel_index]
+            
+            st.subheader("一括入力")
+            st.info("💡 抽選忘れの場合は **9999** を入力してください")
+
+            with st.form("input_form"):
+                active_mem = df_mem[df_mem['is_active'] == "TRUE"].sort_values('display_order')
+                inputs = {}
+                cols = st.columns(2)
+                for idx, row in active_mem.iterrows():
+                    with cols[idx % 2]:
+                        inputs[row['name']] = st.number_input(f"{row['name']}", min_value=0, step=1, key=f"in_{row['name']}")
+                
+                if st.form_submit_button("登録・更新"):
+                    ws_trans = get_worksheet("transactions")
+                    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    date_str = match_dates.get(sel_match_id, datetime.now().strftime('%Y/%m/%d'))
+                    tgt_season = selected_season if selected_season != "全期間" else str(datetime.now().year)
+                    new_rows = []
+                    cnt = 0
+                    for name, num in inputs.items():
+                        if num > 0:
+                            amt = calculate_amount(num, df_rates)
+                            new_rows.append([date_str, str(tgt_season), sel_match_id, name, num, amt, now_str])
+                            cnt += 1
+                    
+                    if new_rows:
+                        ws_trans.append_rows(new_rows)
+                        st.success(f"{cnt}件 保存しました！ (試合日: {date_str})")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.warning("番号を入力してください")
+
+# === Tab 3: 履歴 ===
+with tab3:
+    if not merged_trans.empty:
+        if 'timestamp' in merged_trans.columns and 'date' in merged_trans.columns:
+            sorted_df = merged_trans.sort_values(['date', 'timestamp'], ascending=[False, False])
+        else:
+            sorted_df = merged_trans
+            
+        display_cols = ['season', 'date', 'match_id', 'opponent', 'name', 'number', 'amount']
+        display_cols = [c for c in display_cols if c in sorted_df.columns]
+        
+        st.dataframe(sorted_df[display_cols], use_container_width=True)
+    else:
+        st.write("履歴なし")
+
+# === Tab 4: 日程追加 (Adminのみ) ===
+with tab4:
+    st.header("📅 新しい試合日程の追加")
+    if st.session_state['role'] != 'admin':
+        st.warning("管理者のみ追加可能です")
+    else:
+        with st.form("add_schedule_form"):
+            c1, c2 = st.columns(2)
+            with c1:
+                in_season = st.text_input("シーズン (例: 2025)", value=str(datetime.now().year))
+                in_section = st.text_input("節 (例: 第5節)")
+                in_date = st.text_input("日付 (例: 2025/4/1)")
+            with c2:
+                in_opp = st.text_input("対戦相手")
+                in_type = st.selectbox("開催", ["Home", "Away"])
+                in_stad = st.text_input("スタジアム", value="フクアリ")
+
+            if st.form_submit_button("日程を追加する"):
+                if in_section and in_date and in_opp:
+                    get_worksheet("schedule").append_row([in_season, in_section, in_date, in_opp, in_type, in_stad])
+                    st.success(f"{in_section} vs {in_opp} を追加しました！")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("入力していない項目があります")
+
+# === Tab 5: 設定 ===
+with tab5:
+    st.header("⚙️ アプリ設定")
+    if st.session_state['role'] != 'admin':
+        st.warning("管理者のみ変更可能です")
+    else:
+        st.subheader("💰 レート設定")
+        edited_rates = st.data_editor(df_rates, num_rows="dynamic", use_container_width=True, key="editor_rates")
+        st.markdown("※ 抽選忘れは **9999** を入力")
+
+        if st.button("レート設定を保存する"):
+            try:
+                ws = get_worksheet("rates")
+                ws.clear()
+                ws.update([edited_rates.columns.values.tolist()] + edited_rates.astype(str).values.tolist())
+                st.success("レート設定を更新しました！")
+                time.sleep(1)
+                st.rerun()
+            except Exception as e:
+                st.error(f"保存エラー: {e}")
+
+        st.divider()
+
+        st.subheader("👥 メンバー管理")
+        st.info("※ `is_active` を **TRUE** で表示、**FALSE** で非表示")
+        edited_mem = st.data_editor(
+            df_mem, num_rows="dynamic", use_container_width=True, key="editor_members",
+            column_config={
+                "is_active": st.column_config.SelectboxColumn("有効", options=["TRUE", "FALSE"], required=True),
+                "display_order": st.column_config.NumberColumn("並び順", min_value=1, step=1)
+            }
+        )
+        
+        if st.button("メンバー設定を保存する"):
+            try:
+                ws = get_worksheet("members")
+                ws.clear()
+                ws.update([edited_mem.columns.values.tolist()] + edited_mem.astype(str).values.tolist())
+                st.success("メンバー情報を更新しました！")
+                time.sleep(1)
+                st.rerun()
+            except Exception as e:
+                st.error(f"保存エラー: {e}")
