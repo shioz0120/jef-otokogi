@@ -207,8 +207,7 @@ with tab1:
 
             st.divider()
             
-            # --- 3. 抽選番号 (ベスト/ワースト) ---
-            # 【変更】タイトルを変更
+            # --- 3. 抽選番号 (ベスト/ワースト/平均) ---
             st.subheader("抽選番号ランキング（抽選忘れ除く）")
             
             # 9999と0を除外
@@ -220,7 +219,8 @@ with tab1:
                 "name": "名前"
             }
             
-            c_best, c_worst = st.columns(2)
+            # 【変更】3カラムにして横並びにする
+            c_best, c_worst, c_avg = st.columns(3)
             
             with c_best:
                 st.markdown("##### ベスト5")
@@ -250,13 +250,8 @@ with tab1:
                 else:
                     st.caption("データなし")
             
-            st.divider()
-
-            # --- 4. 平均抽選番号 & 抽選忘れ ---
-            c_avg, c_9999 = st.columns(2)
-            
             with c_avg:
-                st.subheader("平均抽選番号")
+                st.markdown("##### 平均抽選番号")
                 if not df_valid_num.empty:
                     # 平均を計算
                     df_avg = df_valid_num.groupby('name')['number'].mean().reset_index()
@@ -277,16 +272,18 @@ with tab1:
                 else:
                     st.caption("データなし")
 
-            with c_9999:
-                st.subheader("抽選忘れ回数")
-                df_9999 = merged_trans[merged_trans['number'] == 9999]
-                
-                if not df_9999.empty:
-                    count_9999 = df_9999['name'].value_counts().reset_index()
-                    count_9999.columns = ['名前', '回数']
-                    st.dataframe(count_9999, hide_index=True, use_container_width=True)
-                else:
-                    st.info("現在、抽選忘れ (9999) は誰もいません。")
+            st.divider()
+
+            # --- 4. 抽選忘れ回数 ---
+            st.subheader("抽選忘れ回数")
+            df_9999 = merged_trans[merged_trans['number'] == 9999]
+            
+            if not df_9999.empty:
+                count_9999 = df_9999['name'].value_counts().reset_index()
+                count_9999.columns = ['名前', '回数']
+                st.dataframe(count_9999, hide_index=True, use_container_width=False)
+            else:
+                st.info("現在、抽選忘れ (9999) は誰もいません。")
 
         else:
              st.error(f"列不足エラー: {current_trans.columns.tolist()}")
