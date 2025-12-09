@@ -39,7 +39,7 @@ def load_data():
     df_rates = load_data_from_sheet("rates")
     df_mem = load_data_from_sheet("members")
     
-    # 型変換
+    # 型変換とデータ整理
     if not df_trans.empty:
         df_trans.columns = df_trans.columns.str.strip()
         if 'amount' in df_trans.columns:
@@ -48,7 +48,7 @@ def load_data():
             df_trans['number'] = pd.to_numeric(df_trans['number'], errors='coerce').fillna(0)
         if 'season' in df_trans.columns:
             df_trans['season'] = df_trans['season'].astype(str).str.strip()
-            
+
     if not df_rates.empty:
         df_rates.columns = df_rates.columns.str.strip()
         cols = ['min_rank', 'max_rank', 'amount']
@@ -76,7 +76,7 @@ def calculate_amount(number, df_rates):
             continue
     return 1000
 
-# --- 関数: RSSニュース取得 (追加機能) ---
+# --- 関数: RSSニュース取得 (ここだけ追加) ---
 @st.cache_data(ttl=3600)
 def get_jef_rss_news():
     url = "http://rss.phew.homeip.net/v10/10010.xml"
@@ -87,9 +87,7 @@ def get_jef_rss_news():
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         response.encoding = response.apparent_encoding
-        # xmlパーサーではなくhtml.parserを使うことでエラー回避
         soup = BeautifulSoup(response.content, "html.parser")
-        
         items = soup.find_all("item")
         news_list = []
         for item in items[:5]:
@@ -114,22 +112,22 @@ def login():
     if 'role' in st.session_state:
         return True
     
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        st.title("⚽ 男気チャンス")
-        st.markdown("##### 合言葉を入力してください")
-        password = st.text_input("Password", type="password")
-        if st.button("Login"):
-            if password == st.secrets["passwords"]["admin"]:
-                st.session_state['role'] = 'admin'
-                st.rerun()
-            elif password == st.secrets["passwords"]["guest"]:
-                st.session_state['role'] = 'guest'
-                st.rerun()
-            else:
-                st.error("パスワードが違います")
+    # 元のレイアウトを維持
+    st.title("⚽ 男気チャンス")
+    st.markdown("##### 合言葉を入力してください")
     
-    # --- ニュース表示エリア (追加) ---
+    password = st.text_input("Password", type="password")
+    if st.button("Login"):
+        if password == st.secrets["passwords"]["admin"]:
+            st.session_state['role'] = 'admin'
+            st.rerun()
+        elif password == st.secrets["passwords"]["guest"]:
+            st.session_state['role'] = 'guest'
+            st.rerun()
+        else:
+            st.error("パスワードが違います")
+    
+    # --- ニュース表示 (ここだけ追加) ---
     st.divider()
     st.subheader("📰 ジェフ千葉 最新ニュース")
     news_items = get_jef_rss_news()
@@ -142,7 +140,7 @@ def login():
         st.caption("Source: JEF UNITED RSS")
     else:
         st.caption("ニュースを読み込めませんでした")
-
+        
     return False
 
 # ==========================================
@@ -169,7 +167,7 @@ season_options = ["全期間"] + season_list
 default_idx = 1 if len(season_options) > 1 else 0
 selected_season = st.sidebar.selectbox("シーズン表示切替", season_options, index=default_idx)
 
-# フィルタリング (表示用)
+# フィルタリング
 current_sched = pd.DataFrame()
 current_trans = pd.DataFrame()
 
@@ -221,7 +219,7 @@ with tab1:
     
     if not current_trans.empty:
         if 'timestamp' in current_trans.columns and 'amount' in current_trans.columns:
-            # 最新データ (重複排除)
+            # 最新データ取得
             df_latest = current_trans.sort_values('timestamp').drop_duplicates(subset=['match_id', 'name'], keep='last')
             
             # --- 1. 金額集計 ---
@@ -238,14 +236,13 @@ with tab1:
             
             # --- 2. 折れ線グラフ (累積推移) ---
             with c_chart:
-                # 安定版のグラフロジック: merged_transを使って日付を正確にする
-                df_period_line = merged_trans.sort_values(['date', 'timestamp']).drop_duplicates(subset=['season', 'match_id', 'name'], keep='last').copy()
+                df_chart = merged_trans.sort_values(['date', 'timestamp']).drop_duplicates(subset=['season', 'match_id', 'name'], keep='last').copy()
                 
                 # 累積和の計算
-                df_period_line['cumulative_amount'] = df_period_line.groupby('name')['amount'].cumsum()
+                df_chart['cumulative_amount'] = df_chart.groupby('name')['amount'].cumsum()
                 
                 fig_line = px.line(
-                    df_period_line, 
+                    df_chart, 
                     x='date', 
                     y='cumulative_amount', 
                     color='name', 
@@ -257,7 +254,7 @@ with tab1:
 
             st.divider()
 
-            # --- 3. 番号ランキング集計 (安定版の機能) ---
+            # --- 3. 番号ランキング集計 ---
             # 9999(忘れ)と0(参加なし)を除いた純粋な抽選番号データ
             df_nums = df_latest[(df_latest['number'] > 0) & (df_latest['number'] < 9999)]
             
@@ -285,7 +282,7 @@ with tab1:
 
             st.divider()
 
-            # --- 4. 平均と忘れ回数 (安定版の機能) ---
+            # --- 4. 平均と忘れ回数 ---
             col_s1, col_s2 = st.columns(2)
             
             with col_s1:
