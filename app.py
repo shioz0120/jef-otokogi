@@ -136,4 +136,255 @@ if not current_trans.empty:
     
     # 日付列がない場合の保険
     if 'date' not in merged_trans.columns:
-        merged_trans['date'] =
+        merged_trans['date'] = ''
+
+    if not df_sched.empty and 'section' in df_sched.columns:
+        merged_trans['season'] = merged_trans['season'].astype(str)
+        merged_trans['match_id'] = merged_trans['match_id'].astype(str)
+        
+        # マージに必要な列を準備
+        cols_to_use = ['season', 'section']
+        if 'opponent' in df_sched.columns:
+            cols_to_use.append('opponent')
+        if 'date' in df_sched.columns:
+            cols_to_use.append('date')
+            
+        sched_sub = df_sched[cols_to_use].copy()
+        sched_sub['season'] = sched_sub['season'].astype(str)
+        sched_sub['section'] = sched_sub['section'].astype(str)
+        
+        # マージ
+        merged_trans = pd.merge(
+            merged_trans,
+            sched_sub,
+            left_on=['season', 'match_id'],
+            right_on=['season', 'section'],
+            how='left',
+            suffixes=('', '_sched') # dateが重複したら date_sched になる
+        )
+        
+        if 'opponent' not in merged_trans.columns:
+            merged_trans['opponent'] = '-'
+        else:
+            merged_trans['opponent'] = merged_trans['opponent'].fillna('-')
+            
+        # スケジュールの日付があれば優先して上書き（これで入力日ではなく試合日になる）
+        if 'date_sched' in merged_trans.columns:
+             merged_trans['date'] = merged_trans['date_sched'].combine_first(merged_trans['date'])
+    else:
+        merged_trans['opponent'] = '-'
+
+# --- タブ構成 ---
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 ランキング", "📝 入力", "📜 履歴", "📅 日程追加", "⚙️ 設定"])
+
+# === Tab 1: ランキング ===
+with tab1:
+    st.header(f"{selected_season} 男気ランキング")
+    if not current_trans.empty:
+        if 'timestamp' in current_trans.columns and 'amount' in current_trans.columns:
+            # 最新データ (重複排除)
+            df_latest = current_trans.sort_values('timestamp').drop_duplicates(subset=['match_id', 'name'], keep='last')
+            
+            # --- 1. 基本ランキング (円グラフ & テーブル) ---
+            ranking = df_latest.groupby('name')['amount'].sum().reset_index().sort_values('amount', ascending=False)
+            total = ranking['amount'].sum()
+            st.metric("男気トータル", f"¥{total:,}")
+            
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                fig = px.pie(ranking, values='amount', names='name', title='男気シェア', hole=0.4)
+                fig.update_traces(textinfo='percent+label')
+                st.plotly_chart(fig, use_container_width=True)
+            with col2:
+                st.subheader("詳細データ")
+                st.dataframe(ranking.style.format({"amount": "¥{:,.0f}"}), hide_index=True, use_container_width=True)
+            
+            st.divider()
+
+            # --- 2. 累積男気 (折れ線グラフ) ---
+            st.subheader("累積男気")
+            
+            # 正しい日付を使うために merged_trans から必要な情報を再取得
+            # df_latest は current_trans ベースなので日付が古い可能性があるため、match_idとnameでマージして日付を補完
+            if not merged_trans.empty:
+                # 必要な列だけにして重複排除
+                date_map = merged_trans[['season', 'match_id', 'date']].drop_duplicates()
+                df_line = pd.merge(df_latest, date_map, on=['season', 'match_id'], how='left', suffixes=('_old', ''))
+                # date列ができたので、もしdateがNaNなら古いdateを使う
+                if 'date_old' in df_line.columns:
+                    df_line['date'] = df_line['date'].fillna(df_line['date_old'])
+            else:
+                df_line = df_latest.copy()
+
+            # 日付順にソート
+            df_line = df_line.sort_values(['date', 'timestamp'])
+            # 累積和
+            df_line['cumulative_amount'] = df_line.groupby('name')['amount'].cumsum()
+            
+            # グラフ描画
+            fig_line = px.line(
+                df_line, 
+                x='date', # X軸は日付のみ
+                y='cumulative_amount', 
+                color='name', 
+                markers=True,
+                title='累積男気',
+                labels={'cumulative_amount': '累積男気額', 'date': '試合日', 'name': '名前'}
+            )
+            st.plotly_chart(fig_line, use_container_width=True)
+
+            st.divider()
+            
+            # --- 3. 抽選番号 (ベスト/ワースト) ---
+            st.subheader("抽選番号")
+            
+            # 9999と0を除外 (merged_transを使うので日付も正しい)
+            df_valid_num = merged_trans[(merged_trans['number'] > 0) & (merged_trans['number'] != 9999)]
+            
+            # 表示用カラム (番号と名前のみ)
+            cols_disp = ['number', 'name']
+            # 見出し日本語化用マッピング
+            col_config = {
+                "number": "番号",
+                "name": "名前"
+            }
+            
+            c_best, c_worst = st.columns(2)
+            
+            with c_best:
+                st.markdown("##### ベスト5")
+                if not df_valid_num.empty:
+                    df_best = df_valid_num.sort_values('number', ascending=True).head(5)
+                    # インデックスを隠して表示
+                    st.dataframe(
+                        df_best[cols_disp], 
+                        hide_index=True, 
+                        use_container_width=True,
+                        column_config={k: st.column_config.Column(v) for k, v in col_config.items()}
+                    )
+                else:
+                    st.caption("データなし")
+
+            with c_worst:
+                st.markdown("##### ワースト5")
+                if not df_valid_num.empty:
+                    df_worst = df_valid_num.sort_values('number', ascending=False).head(5)
+                    st.dataframe(
+                        df_worst[cols_disp], 
+                        hide_index=True, 
+                        use_container_width=True,
+                        column_config={k: st.column_config.Column(v) for k, v in col_config.items()}
+                    )
+                else:
+                    st.caption("データなし")
+
+            st.divider()
+
+            # --- 4. 抽選忘れ回数 (テーブルのみ) ---
+            st.subheader("抽選忘れ回数")
+            df_9999 = merged_trans[merged_trans['number'] == 9999]
+            
+            if not df_9999.empty:
+                # 集計
+                count_9999 = df_9999['name'].value_counts().reset_index()
+                count_9999.columns = ['名前', '回数']
+                
+                # シンプルな表で表示
+                st.dataframe(count_9999, hide_index=True, use_container_width=False)
+            else:
+                st.info("現在、抽選忘れ (9999) は誰もいません。")
+
+        else:
+             st.error(f"列不足エラー: {current_trans.columns.tolist()}")
+    else:
+        st.info("データがまだありません")
+
+# === Tab 2: 入力 (Adminのみ) ===
+with tab2:
+    if st.session_state['role'] != 'admin':
+        st.warning("ゲストは閲覧のみです")
+    else:
+        with st.expander("💰 現在のレート表を確認する"):
+            st.dataframe(df_rates, hide_index=True)
+            st.caption("※ 抽選忘れは **9999** を入力してください")
+
+        home_games = pd.DataFrame()
+        if not current_sched.empty:
+            home_games = current_sched[current_sched['type'] == 'Home']
+        
+        if home_games.empty:
+            st.info(f"シーズン {selected_season} のホームゲーム予定が見つかりません。")
+            st.info("「📅 日程追加」タブから日程を登録してください。")
+        else:
+            match_options = []
+            match_ids = []
+            match_dates = {}
+            today = datetime.now().date()
+            default_index = 0
+            future_found = False
+            
+            for idx, row in home_games.iterrows():
+                label = f"{row['date']} {row['section']} (vs {row['opponent']})"
+                match_options.append(label)
+                match_ids.append(row['section'])
+                match_dates[row['section']] = str(row['date'])
+                if not future_found:
+                    try:
+                        match_date = datetime.strptime(str(row['date']).strip(), '%Y/%m/%d').date()
+                        if match_date >= today:
+                            default_index = len(match_options) - 1
+                            future_found = True
+                    except:
+                        pass
+            
+            if not future_found and match_options:
+                default_index = len(match_options) - 1
+
+            sel_label = st.selectbox("試合を選択", match_options, index=default_index)
+            sel_index = match_options.index(sel_label)
+            sel_match_id = match_ids[sel_index]
+            
+            st.subheader("一括入力")
+            st.info("💡 抽選忘れの場合は **9999** を入力してください")
+
+            with st.form("input_form"):
+                active_mem = df_mem[df_mem['is_active'] == "TRUE"].sort_values('display_order')
+                inputs = {}
+                cols = st.columns(2)
+                for idx, row in active_mem.iterrows():
+                    with cols[idx % 2]:
+                        inputs[row['name']] = st.number_input(f"{row['name']}", min_value=0, step=1, key=f"in_{row['name']}")
+                
+                if st.form_submit_button("登録・更新"):
+                    ws_trans = get_worksheet("transactions")
+                    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    date_str = match_dates.get(sel_match_id, datetime.now().strftime('%Y/%m/%d'))
+                    tgt_season = selected_season if selected_season != "全期間" else str(datetime.now().year)
+                    new_rows = []
+                    cnt = 0
+                    for name, num in inputs.items():
+                        if num > 0:
+                            amt = calculate_amount(num, df_rates)
+                            new_rows.append([date_str, str(tgt_season), sel_match_id, name, num, amt, now_str])
+                            cnt += 1
+                    
+                    if new_rows:
+                        ws_trans.append_rows(new_rows)
+                        st.success(f"{cnt}件 保存しました！ (試合日: {date_str})")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.warning("番号を入力してください")
+
+# === Tab 3: 履歴 ===
+with tab3:
+    if not merged_trans.empty:
+        if 'timestamp' in merged_trans.columns and 'date' in merged_trans.columns:
+            sorted_df = merged_trans.sort_values(['date', 'timestamp'], ascending=[False, False])
+        else:
+            sorted_df = merged_trans
+            
+        display_cols = ['season', 'date', 'match_id', 'opponent', 'name', 'number', 'amount']
+        display_cols = [c for c in display_cols if c in sorted_df.columns]
+        
+        st.dataframe(sorted_df[display_cols],
