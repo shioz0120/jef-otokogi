@@ -174,6 +174,9 @@ with tab2:
         else:
             match_options = []
             match_ids = []
+            # マッチングした行の日付を取得するための辞書
+            match_dates = {}
+            
             today = datetime.now().date()
             default_index = 0
             future_found = False
@@ -182,6 +185,9 @@ with tab2:
                 label = f"{row['date']} {row['section']} (vs {row['opponent']})"
                 match_options.append(label)
                 match_ids.append(row['section'])
+                # セクションIDをキーに日付を保存
+                match_dates[row['section']] = str(row['date'])
+                
                 if not future_found:
                     try:
                         match_date = datetime.strptime(str(row['date']).strip(), '%Y/%m/%d').date()
@@ -212,7 +218,11 @@ with tab2:
                 if st.form_submit_button("登録・更新"):
                     ws_trans = get_worksheet("transactions")
                     now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    date_str = datetime.now().strftime('%Y/%m/%d')
+                    
+                    # 【修正】入力日ではなく、選択した試合の「開催日」を取得して保存する
+                    # 辞書から試合日を取得 (見つからなければ今日の日付)
+                    date_str = match_dates.get(sel_match_id, datetime.now().strftime('%Y/%m/%d'))
+                    
                     tgt_season = selected_season if selected_season != "全期間" else str(datetime.now().year)
                     new_rows = []
                     cnt = 0
@@ -224,7 +234,7 @@ with tab2:
                     
                     if new_rows:
                         ws_trans.append_rows(new_rows)
-                        st.success(f"{cnt}件 保存しました！")
+                        st.success(f"{cnt}件 保存しました！ (試合日: {date_str})")
                         time.sleep(1)
                         st.rerun()
                     else:
@@ -234,42 +244,45 @@ with tab2:
 with tab3:
     if not current_trans.empty:
         if 'timestamp' in current_trans.columns and 'date' in current_trans.columns:
-            # 1. 履歴を日付順にソート
             sorted_df = current_trans.sort_values(['date', 'timestamp'], ascending=[False, False])
             
-            # 2. スケジュール情報と結合して「対戦相手」を取得
-            display_df = sorted_df.copy()
-            
             if not df_sched.empty and 'section' in df_sched.columns and 'opponent' in df_sched.columns:
-                # マージ用に型を文字列に統一
                 sorted_df_merge = sorted_df.copy()
                 sorted_df_merge['season'] = sorted_df_merge['season'].astype(str)
                 sorted_df_merge['match_id'] = sorted_df_merge['match_id'].astype(str)
                 
-                df_sched_merge = df_sched[['season', 'section', 'opponent']].copy()
+                # スケジュールから 日付(date) と 対戦相手(opponent) を取得
+                # ※ここでスケジュールの正規の日付を取得する
+                cols_to_merge = ['season', 'section', 'opponent']
+                if 'date' in df_sched.columns:
+                    cols_to_merge.append('date')
+
+                df_sched_merge = df_sched[cols_to_merge].copy()
                 df_sched_merge['season'] = df_sched_merge['season'].astype(str)
                 df_sched_merge['section'] = df_sched_merge['section'].astype(str)
                 
-                # 左結合 (Transactionsにあるデータは全て残す)
+                # 左結合
                 merged_df = pd.merge(
                     sorted_df_merge,
                     df_sched_merge,
                     left_on=['season', 'match_id'],
                     right_on=['season', 'section'],
-                    how='left'
+                    how='left',
+                    suffixes=('', '_sched') # dateが重複した場合、スケジュール側は date_sched になる
                 )
                 
-                # opponentがNaN（結合できなかった場合）はハイフンにする
                 merged_df['opponent'] = merged_df['opponent'].fillna('-')
                 
-                # 表示用カラムを選択
+                # 【修正】表示する日付をスケジュールの日付(date_sched)で上書きする (もしあれば)
+                if 'date_sched' in merged_df.columns:
+                    # スケジュールの日付があれば優先、なければ元の入力日付を使う
+                    merged_df['date'] = merged_df['date_sched'].combine_first(merged_df['date'])
+
                 display_cols = ['season', 'date', 'match_id', 'opponent', 'name', 'number', 'amount']
-                # 万が一カラムがない場合のエラー回避
                 display_cols = [c for c in display_cols if c in merged_df.columns]
                 
                 st.dataframe(merged_df[display_cols], use_container_width=True)
             else:
-                # スケジュール情報がない場合は従来通り
                 st.dataframe(sorted_df[['season', 'date', 'match_id', 'name', 'number', 'amount']], use_container_width=True)
         else:
             st.dataframe(current_trans, use_container_width=True)
