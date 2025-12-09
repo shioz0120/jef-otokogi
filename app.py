@@ -234,9 +234,43 @@ with tab2:
 with tab3:
     if not current_trans.empty:
         if 'timestamp' in current_trans.columns and 'date' in current_trans.columns:
+            # 1. 履歴を日付順にソート
             sorted_df = current_trans.sort_values(['date', 'timestamp'], ascending=[False, False])
-            disp_df = sorted_df[['season', 'date', 'match_id', 'name', 'number', 'amount']]
-            st.dataframe(disp_df, use_container_width=True)
+            
+            # 2. スケジュール情報と結合して「対戦相手」を取得
+            display_df = sorted_df.copy()
+            
+            if not df_sched.empty and 'section' in df_sched.columns and 'opponent' in df_sched.columns:
+                # マージ用に型を文字列に統一
+                sorted_df_merge = sorted_df.copy()
+                sorted_df_merge['season'] = sorted_df_merge['season'].astype(str)
+                sorted_df_merge['match_id'] = sorted_df_merge['match_id'].astype(str)
+                
+                df_sched_merge = df_sched[['season', 'section', 'opponent']].copy()
+                df_sched_merge['season'] = df_sched_merge['season'].astype(str)
+                df_sched_merge['section'] = df_sched_merge['section'].astype(str)
+                
+                # 左結合 (Transactionsにあるデータは全て残す)
+                merged_df = pd.merge(
+                    sorted_df_merge,
+                    df_sched_merge,
+                    left_on=['season', 'match_id'],
+                    right_on=['season', 'section'],
+                    how='left'
+                )
+                
+                # opponentがNaN（結合できなかった場合）はハイフンにする
+                merged_df['opponent'] = merged_df['opponent'].fillna('-')
+                
+                # 表示用カラムを選択
+                display_cols = ['season', 'date', 'match_id', 'opponent', 'name', 'number', 'amount']
+                # 万が一カラムがない場合のエラー回避
+                display_cols = [c for c in display_cols if c in merged_df.columns]
+                
+                st.dataframe(merged_df[display_cols], use_container_width=True)
+            else:
+                # スケジュール情報がない場合は従来通り
+                st.dataframe(sorted_df[['season', 'date', 'match_id', 'name', 'number', 'amount']], use_container_width=True)
         else:
             st.dataframe(current_trans, use_container_width=True)
     else:
