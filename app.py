@@ -194,7 +194,6 @@ with tab1:
             df_period_line['cumulative_amount'] = df_period_line.groupby('name')['amount'].cumsum()
             
             # グラフ描画
-            # 【修正】グラフタイトルを「累積男気」のみに変更
             fig_line = px.line(
                 df_period_line, 
                 x='date', 
@@ -281,7 +280,11 @@ with tab1:
             if not df_9999.empty:
                 count_9999 = df_9999['name'].value_counts().reset_index()
                 count_9999.columns = ['名前', '回数']
-                st.dataframe(count_9999, hide_index=True, use_container_width=True)
+                
+                # 【変更】3列カラムの1つ目を使って、横幅を小さくする
+                c_miss_1, c_miss_2, c_miss_3 = st.columns(3)
+                with c_miss_1:
+                    st.dataframe(count_9999, hide_index=True, use_container_width=True)
             else:
                 st.info("現在、抽選忘れ (9999) は誰もいません。")
 
