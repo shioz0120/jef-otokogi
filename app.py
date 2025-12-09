@@ -79,7 +79,7 @@ def calculate_amount(number, df_rates):
             continue
     return 1000
 
-# --- 関数: RSSニュース取得 ---
+# --- 関数: RSSニュース取得 (URL取得ロジック強化版) ---
 @st.cache_data(ttl=3600)
 def get_jef_rss_news():
     url = "http://rss.phew.homeip.net/v10/10010.xml"
@@ -91,20 +91,39 @@ def get_jef_rss_news():
         response.raise_for_status()
         response.encoding = response.apparent_encoding
         soup = BeautifulSoup(response.content, "html.parser")
+        
         items = soup.find_all("item")
         news_list = []
+        
         for item in items[:5]:
-            title = item.title.text
-            link = item.link.text
+            # タイトルの取得
+            title_tag = item.find('title')
+            title = title_tag.get_text(strip=True) if title_tag else "No Title"
+            
+            # URLの取得 (html.parserの癖対策)
+            link_tag = item.find('link')
+            link = ""
+            if link_tag:
+                # まず普通にテキストを取得してみる
+                link = link_tag.get_text(strip=True)
+                # もし空っぽなら、html.parserが空タグ扱いしている可能性があるので、直後の文字列を探す
+                if not link and link_tag.next_sibling:
+                    link = str(link_tag.next_sibling).strip()
+            
+            # 日付の取得
             date_str = ""
             dc_date = item.find("dc:date")
             if dc_date:
                 try:
-                    dt = datetime.strptime(dc_date.text[:10], "%Y-%m-%d")
+                    dt = datetime.strptime(dc_date.get_text(strip=True)[:10], "%Y-%m-%d")
                     date_str = dt.strftime("%m/%d")
                 except:
                     pass
-            news_list.append({"date": date_str, "title": title, "link": link})
+            
+            # リンクが http で始まっているか確認
+            if link and link.startswith('http'):
+                news_list.append({"date": date_str, "title": title, "link": link})
+                
         return news_list
     except Exception as e:
         print(f"RSS Error: {e}")
@@ -134,10 +153,13 @@ def login():
     news_items = get_jef_rss_news()
     if news_items:
         for news in news_items:
-            if news['date']:
-                st.markdown(f"**{news['date']}** <a href='{news['link']}' target='_blank' rel='noopener noreferrer'>{news['title']}</a>", unsafe_allow_html=True)
+            # リンクが正常に取得できている場合のみリンク化
+            if news['link']:
+                link_html = f"**{news['date']}** <a href='{news['link']}' target='_blank' rel='noopener noreferrer'>{news['title']}</a>"
+                st.markdown(link_html, unsafe_allow_html=True)
             else:
-                st.markdown(f"- <a href='{news['link']}' target='_blank' rel='noopener noreferrer'>{news['title']}</a>", unsafe_allow_html=True)
+                # リンクがない場合はテキストのみ
+                st.markdown(f"**{news['date']}** {news['title']}")
         st.caption("Source: JEF UNITED RSS")
     else:
         st.caption("ニュースを読み込めませんでした。")
@@ -503,7 +525,6 @@ with tab5:
 
         st.subheader("👥 メンバー管理")
         
-        # 【修正】日本語表記に合わせて説明文を変更
         st.info("""
         **設定項目の説明**
         * **入力表示**: 入力画面に名前を表示しますか？ (TRUE=表示 / FALSE=隠す)
