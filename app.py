@@ -387,4 +387,76 @@ with tab3:
         display_cols = ['season', 'date', 'match_id', 'opponent', 'name', 'number', 'amount']
         display_cols = [c for c in display_cols if c in sorted_df.columns]
         
-        st.dataframe(sorted_df[display_cols],
+        st.dataframe(sorted_df[display_cols], use_container_width=True)
+    else:
+        st.write("履歴なし")
+
+# === Tab 4: 日程追加 (Adminのみ) ===
+with tab4:
+    st.header("📅 新しい試合日程の追加")
+    if st.session_state['role'] != 'admin':
+        st.warning("管理者のみ追加可能です")
+    else:
+        with st.form("add_schedule_form"):
+            c1, c2 = st.columns(2)
+            with c1:
+                in_season = st.text_input("シーズン (例: 2025)", value=str(datetime.now().year))
+                in_section = st.text_input("節 (例: 第5節)")
+                in_date = st.text_input("日付 (例: 2025/4/1)")
+            with c2:
+                in_opp = st.text_input("対戦相手")
+                in_type = st.selectbox("開催", ["Home", "Away"])
+                in_stad = st.text_input("スタジアム", value="フクアリ")
+
+            if st.form_submit_button("日程を追加する"):
+                if in_section and in_date and in_opp:
+                    get_worksheet("schedule").append_row([in_season, in_section, in_date, in_opp, in_type, in_stad])
+                    st.success(f"{in_section} vs {in_opp} を追加しました！")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("入力していない項目があります")
+
+# === Tab 5: 設定 ===
+with tab5:
+    st.header("⚙️ アプリ設定")
+    if st.session_state['role'] != 'admin':
+        st.warning("管理者のみ変更可能です")
+    else:
+        st.subheader("💰 レート設定")
+        edited_rates = st.data_editor(df_rates, num_rows="dynamic", use_container_width=True, key="editor_rates")
+        st.markdown("※ 抽選忘れは **9999** を入力")
+
+        if st.button("レート設定を保存する"):
+            try:
+                ws = get_worksheet("rates")
+                ws.clear()
+                ws.update([edited_rates.columns.values.tolist()] + edited_rates.astype(str).values.tolist())
+                st.success("レート設定を更新しました！")
+                time.sleep(1)
+                st.rerun()
+            except Exception as e:
+                st.error(f"保存エラー: {e}")
+
+        st.divider()
+
+        st.subheader("👥 メンバー管理")
+        st.info("※ `is_active` を **TRUE** で表示、**FALSE** で非表示")
+        edited_mem = st.data_editor(
+            df_mem, num_rows="dynamic", use_container_width=True, key="editor_members",
+            column_config={
+                "is_active": st.column_config.SelectboxColumn("有効", options=["TRUE", "FALSE"], required=True),
+                "display_order": st.column_config.NumberColumn("並び順", min_value=1, step=1)
+            }
+        )
+        
+        if st.button("メンバー設定を保存する"):
+            try:
+                ws = get_worksheet("members")
+                ws.clear()
+                ws.update([edited_mem.columns.values.tolist()] + edited_mem.astype(str).values.tolist())
+                st.success("メンバー情報を更新しました！")
+                time.sleep(1)
+                st.rerun()
+            except Exception as e:
+                st.error(f"保存エラー: {e}")
