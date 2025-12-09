@@ -44,8 +44,6 @@ def load_data():
             df_trans['amount'] = pd.to_numeric(df_trans['amount'], errors='coerce').fillna(0)
         if 'number' in df_trans.columns:
             df_trans['number'] = pd.to_numeric(df_trans['number'], errors='coerce').fillna(0)
-        if 'season' in df_trans.columns:
-            df_trans['season'] = df_trans['season'].astype(str).str.strip()
             
     if not df_rates.empty:
         df_rates.columns = df_rates.columns.str.strip()
@@ -78,7 +76,6 @@ def calculate_amount(number, df_rates):
 def login():
     if 'role' in st.session_state:
         return True
-    
     st.title("⚽ 男気チャンス")
     st.markdown("##### 合言葉を入力してください")
     password = st.text_input("Password", type="password")
@@ -133,102 +130,26 @@ else:
         current_trans = df_trans[df_trans['season'].astype(str) == str(selected_season)]
 
 # --- タブ構成 ---
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 データ分析", "📝 入力", "📜 履歴", "📅 日程追加", "⚙️ 設定"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 ランキング", "📝 入力", "📜 履歴", "📅 日程追加", "⚙️ 設定"])
 
-# === Tab 1: データ分析 (ランキング・グラフ) ===
+# === Tab 1: ランキング ===
 with tab1:
-    st.header(f"{selected_season} 男気データ分析")
-    
+    st.header(f"{selected_season} 男気ランキング")
     if not current_trans.empty:
         if 'timestamp' in current_trans.columns and 'amount' in current_trans.columns:
-            # 最新データ取得
             df_latest = current_trans.sort_values('timestamp').drop_duplicates(subset=['match_id', 'name'], keep='last')
-            
-            # --- 1. 金額集計 ---
             ranking = df_latest.groupby('name')['amount'].sum().reset_index().sort_values('amount', ascending=False)
             total = ranking['amount'].sum()
-            st.metric("💰 男気トータル金額", f"¥{total:,}")
+            st.metric("男気トータル", f"¥{total:,}")
             
-            # 円グラフ
-            c_pie, c_chart = st.columns([1, 2])
-            with c_pie:
-                fig = px.pie(ranking, values='amount', names='name', title='支払いシェア', hole=0.4)
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                fig = px.pie(ranking, values='amount', names='name', title='男気シェア', hole=0.4)
                 fig.update_traces(textinfo='percent+label')
                 st.plotly_chart(fig, use_container_width=True)
-            
-            # --- 2. 折れ線グラフ (累積推移) ---
-            with c_chart:
-                df_chart = df_latest.copy()
-                df_chart['date_dt'] = pd.to_datetime(df_chart['date'], errors='coerce')
-                df_chart = df_chart.sort_values('date_dt')
-                
-                # 累積和の計算
-                df_chart['cumulative_amount'] = df_chart.groupby('name')['amount'].cumsum()
-                
-                fig_line = px.line(
-                    df_chart, 
-                    x='date', 
-                    y='cumulative_amount', 
-                    color='name', 
-                    markers=True,
-                    title='男気レース (累積金額の推移)'
-                )
-                fig_line.update_layout(xaxis_title="日付", yaxis_title="累積金額")
-                st.plotly_chart(fig_line, use_container_width=True)
-
-            st.divider()
-
-            # --- 3. 番号ランキング集計 ---
-            # 9999(忘れ)と0(参加なし)を除いた純粋な抽選番号データ
-            df_nums = df_latest[(df_latest['number'] > 0) & (df_latest['number'] < 9999)]
-            
-            col_b1, col_b2 = st.columns(2)
-            
-            with col_b1:
-                st.subheader("🍀 抽選番号 Best 5 (強運)")
-                st.caption("小さい番号を出したランキング")
-                if not df_nums.empty:
-                    best5 = df_nums.nsmallest(5, 'number')[['date', 'name', 'number', 'amount']]
-                    best5.index = range(1, len(best5) + 1)
-                    st.dataframe(best5, use_container_width=True)
-                else:
-                    st.write("データなし")
-
-            with col_b2:
-                st.subheader("💀 抽選番号 Worst 5 (男気)")
-                st.caption("大きい番号を出したランキング")
-                if not df_nums.empty:
-                    worst5 = df_nums.nlargest(5, 'number')[['date', 'name', 'number', 'amount']]
-                    worst5.index = range(1, len(worst5) + 1)
-                    st.dataframe(worst5, use_container_width=True)
-                else:
-                    st.write("データなし")
-
-            st.divider()
-
-            # --- 4. 平均と忘れ回数 ---
-            col_s1, col_s2 = st.columns(2)
-            
-            with col_s1:
-                st.subheader("🔢 平均抽選番号")
-                st.caption("※9999と0を除く")
-                if not df_nums.empty:
-                    avg_num = df_nums.groupby('name')['number'].mean().reset_index()
-                    avg_num.columns = ['Name', 'Average']
-                    avg_num = avg_num.sort_values('Average', ascending=False)
-                    st.dataframe(avg_num.style.format({"Average": "{:.1f}"}), use_container_width=True, hide_index=True)
-                else:
-                    st.write("データなし")
-
-            with col_s2:
-                st.subheader("⚠️ 抽選し忘れ (9999) 回数")
-                missed = df_latest[df_latest['number'] == 9999].groupby('name').size().reset_index(name='Count')
-                missed = missed.sort_values('Count', ascending=False)
-                if not missed.empty:
-                    st.dataframe(missed, use_container_width=True, hide_index=True)
-                else:
-                    st.write("まだ抽選忘れはありません！優秀！")
-
+            with col2:
+                st.subheader("詳細データ")
+                st.dataframe(ranking.style.format({"amount": "¥{:,.0f}"}), hide_index=True, use_container_width=True)
         else:
              st.error(f"列不足エラー: {current_trans.columns.tolist()}")
     else:
@@ -313,18 +234,23 @@ with tab2:
 with tab3:
     if not current_trans.empty:
         if 'timestamp' in current_trans.columns and 'date' in current_trans.columns:
+            # 1. 履歴を日付順にソート
             sorted_df = current_trans.sort_values(['date', 'timestamp'], ascending=[False, False])
             
-            # 対戦相手表示ロジック
+            # 2. スケジュール情報と結合して「対戦相手」を取得
             display_df = sorted_df.copy()
+            
             if not df_sched.empty and 'section' in df_sched.columns and 'opponent' in df_sched.columns:
+                # マージ用に型を文字列に統一
                 sorted_df_merge = sorted_df.copy()
                 sorted_df_merge['season'] = sorted_df_merge['season'].astype(str)
                 sorted_df_merge['match_id'] = sorted_df_merge['match_id'].astype(str)
+                
                 df_sched_merge = df_sched[['season', 'section', 'opponent']].copy()
                 df_sched_merge['season'] = df_sched_merge['season'].astype(str)
                 df_sched_merge['section'] = df_sched_merge['section'].astype(str)
                 
+                # 左結合 (Transactionsにあるデータは全て残す)
                 merged_df = pd.merge(
                     sorted_df_merge,
                     df_sched_merge,
@@ -332,11 +258,18 @@ with tab3:
                     right_on=['season', 'section'],
                     how='left'
                 )
+                
+                # opponentがNaN（結合できなかった場合）はハイフンにする
                 merged_df['opponent'] = merged_df['opponent'].fillna('-')
+                
+                # 表示用カラムを選択
                 display_cols = ['season', 'date', 'match_id', 'opponent', 'name', 'number', 'amount']
+                # 万が一カラムがない場合のエラー回避
                 display_cols = [c for c in display_cols if c in merged_df.columns]
+                
                 st.dataframe(merged_df[display_cols], use_container_width=True)
             else:
+                # スケジュール情報がない場合は従来通り
                 st.dataframe(sorted_df[['season', 'date', 'match_id', 'name', 'number', 'amount']], use_container_width=True)
         else:
             st.dataframe(current_trans, use_container_width=True)
