@@ -208,7 +208,7 @@ if not current_trans.empty:
     else:
         merged_trans['opponent'] = '-'
 
-    # 【追加】日付型に変換 (ソート不具合の修正)
+    # 日付型に変換
     if 'date' in merged_trans.columns:
         merged_trans['date'] = pd.to_datetime(merged_trans['date'], errors='coerce').dt.date
 
@@ -221,7 +221,8 @@ with tab1:
     if not current_trans.empty:
         if 'timestamp' in current_trans.columns and 'amount' in current_trans.columns:
             # 最新データ (重複排除)
-            df_latest = current_trans.sort_values('timestamp').drop_duplicates(subset=['match_id', 'name'], keep='last')
+            # 【修正点】subsetに 'season' を追加しました。これで全期間でも年度ごとの第○節が区別されます。
+            df_latest = current_trans.sort_values('timestamp').drop_duplicates(subset=['season', 'match_id', 'name'], keep='last')
             
             # --- 1. 基本ランキング (円グラフ & テーブル) ---
             ranking = df_latest.groupby('name')['amount'].sum().reset_index().sort_values('amount', ascending=False)
@@ -243,7 +244,6 @@ with tab1:
             st.subheader("累積男気（累積データ）")
             
             # 最新の日付補完済みデータを準備
-            # date型に変換済みなのでソートが正確になる
             df_period_line = merged_trans.sort_values(['date', 'timestamp']).drop_duplicates(subset=['season', 'match_id', 'name'], keep='last').copy()
             
             # 累積和を計算
