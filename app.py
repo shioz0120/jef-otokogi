@@ -221,7 +221,6 @@ with tab1:
     if not current_trans.empty:
         if 'timestamp' in current_trans.columns and 'amount' in current_trans.columns:
             # 最新データ (重複排除)
-            # 【修正点】subsetに 'season' を追加しました。これで全期間でも年度ごとの第○節が区別されます。
             df_latest = current_trans.sort_values('timestamp').drop_duplicates(subset=['season', 'match_id', 'name'], keep='last')
             
             # --- 1. 基本ランキング (円グラフ & テーブル) ---
@@ -326,16 +325,20 @@ with tab1:
 
             st.divider()
 
-            # --- 4. 抽選忘れ回数 ---
-            st.subheader("抽選忘れ回数")
-            df_9999 = merged_trans[merged_trans['number'] == 9999]
+            # --- 4. 抽選忘れ回数 (レイアウト修正：カラムを切って幅を合わせる) ---
+            # 3カラム用意して、左端の1つだけを使う
+            c_missed, c_dummy1, c_dummy2 = st.columns(3)
             
-            if not df_9999.empty:
-                count_9999 = df_9999['name'].value_counts().reset_index()
-                count_9999.columns = ['名前', '回数']
-                st.dataframe(count_9999, hide_index=True, use_container_width=True)
-            else:
-                st.info("現在、抽選忘れ (9999) は誰もいません。")
+            with c_missed:
+                st.subheader("⚠️ 抽選忘れ回数")
+                df_9999 = merged_trans[merged_trans['number'] == 9999]
+                
+                if not df_9999.empty:
+                    count_9999 = df_9999['name'].value_counts().reset_index()
+                    count_9999.columns = ['名前', '回数']
+                    st.dataframe(count_9999, hide_index=True, use_container_width=True)
+                else:
+                    st.info("現在、抽選忘れ (9999) は誰もいません。")
 
         else:
              st.error(f"列不足エラー: {current_trans.columns.tolist()}")
