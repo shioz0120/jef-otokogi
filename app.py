@@ -128,16 +128,19 @@ def login():
         else:
             st.error("パスワードが違います")
             
-    # --- ニュース表示 ---
+    # --- ニュース表示 (リンク修正版) ---
     st.divider()
     st.subheader("📰 公式最新ニュース")
     news_items = get_jef_rss_news()
     if news_items:
         for news in news_items:
+            # HTMLタグを使用して target="_blank" (新しいタブ) を指定
             if news['date']:
-                st.markdown(f"**{news['date']}** [{news['title']}]({news['link']})")
+                link_html = f"**{news['date']}** <a href='{news['link']}' target='_blank' rel='noopener noreferrer'>{news['title']}</a>"
+                st.markdown(link_html, unsafe_allow_html=True)
             else:
-                st.markdown(f"- [{news['title']}]({news['link']})")
+                link_html = f"- <a href='{news['link']}' target='_blank' rel='noopener noreferrer'>{news['title']}</a>"
+                st.markdown(link_html, unsafe_allow_html=True)
         st.caption("Source: JEF UNITED RSS")
     else:
         st.caption("ニュースを読み込めませんでした。")
@@ -503,7 +506,6 @@ with tab5:
 
         st.subheader("👥 メンバー管理")
         
-        # 【修正】改行を追加して見やすくしました
         st.info("""
         **設定項目の説明**
         * **is_active**: 入力画面に名前を表示しますか？ (TRUE=表示 / FALSE=隠す)
